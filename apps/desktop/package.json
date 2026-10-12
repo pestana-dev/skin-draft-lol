@@ -1,0 +1,17 @@
+{
+  "name": "@skin-draft/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node ./scripts/run-tauri.mjs dev",
+    "build": "node ./scripts/run-tauri.mjs build",
+    "tauri": "node ./scripts/run-tauri.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0"
+  }
+}

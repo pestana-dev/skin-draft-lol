@@ -1,0 +1,30 @@
+[package]
+name = "skin-draft-desktop"
+version = "0.1.0"
+description = "Skin Draft LoL desktop (Tauri)"
+authors = ["pestana-dev"]
+edition = "2021"
+
+[lib]
+name = "skin_draft_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+tauri-plugin-process = "2.4.0"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2.13.3"

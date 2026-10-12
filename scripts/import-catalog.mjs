@@ -47,7 +47,26 @@ const SERVICE_KEY =
   ''
 
 const DDRAGON = 'https://ddragon.leagueoflegends.com'
+const MERAKI =
+  'https://cdn.merakianalytics.com/riot/lol/resources/latest/en-US/champions.json'
 const BATCH = 200
+
+const POSITION_MAP = {
+  TOP: 'TOP',
+  JUNGLE: 'JUNGLE',
+  MIDDLE: 'MID',
+  BOTTOM: 'ADC',
+  SUPPORT: 'SUPPORT',
+}
+
+function mapPositions(positions) {
+  const out = []
+  for (const p of positions ?? []) {
+    const mapped = POSITION_MAP[String(p).toUpperCase()]
+    if (mapped && !out.includes(mapped)) out.push(mapped)
+  }
+  return out
+}
 
 const THEME_RULES = [
   { slug: 'project', name: 'PROJECT', match: /^PROJECT:/i },
@@ -161,15 +180,27 @@ async function fetchCatalog() {
   ])
 
   const championList = Object.values(championsEn.data)
-  console.log(`${championList.length} campeões — baixando skins…`)
+  console.log(`${championList.length} campeões — baixando skins + rotas…`)
+
+  let merakiByKey = {}
+  try {
+    const meraki = await fetch(MERAKI).then((r) => r.json())
+    merakiByKey = Object.fromEntries(
+      Object.values(meraki).map((c) => [c.key || c.name, c]),
+    )
+  } catch (err) {
+    console.warn('Meraki roles indisponível:', err.message)
+  }
 
   const champions = championList.map((c) => {
     const br = championsBr.data[c.id]
+    const meraki = merakiByKey[c.id]
     return {
       id: c.id,
       name: br?.name ?? c.name,
       key: c.key,
       image_url: `${DDRAGON}/cdn/${version}/img/champion/${c.image.full}`,
+      roles: mapPositions(meraki?.positions),
     }
   })
 
@@ -269,12 +300,17 @@ function writeSqlSeed({ champions, themes, skins, themeLinks }) {
   {
     const stmts = chunkValues(
       champions,
-      (c) =>
-        `(${sqlStr(c.id)}, ${sqlStr(c.name)}, ${sqlStr(c.key)}, ${sqlStr(c.image_url)})`,
+      (c) => {
+        const roles =
+          (c.roles?.length ?? 0) === 0
+            ? `'{}'::text[]`
+            : `array[${c.roles.map(sqlStr).join(', ')}]::text[]`
+        return `(${sqlStr(c.id)}, ${sqlStr(c.name)}, ${sqlStr(c.key)}, ${sqlStr(c.image_url)}, ${roles})`
+      },
       200,
     ).map(
       (chunk) =>
-        `insert into public.champions (id, name, key, image_url) values\n${chunk}\non conflict (id) do update set name = excluded.name, key = excluded.key, image_url = excluded.image_url;`,
+        `insert into public.champions (id, name, key, image_url, roles) values\n${chunk}\non conflict (id) do update set name = excluded.name, key = excluded.key, image_url = excluded.image_url, roles = excluded.roles;`,
     )
     writePart('champions', stmts.join('\n\n'))
   }

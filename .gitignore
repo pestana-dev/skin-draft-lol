@@ -14,13 +14,20 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
 supabase/seed-catalog.sql
 supabase/seed-parts/
 scripts/.aram-room.txt
+scripts/_sync_aram_baked.py
+build/
 
+# Tauri / Rust
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/*/dist/
+apps/desktop/.tauri-keys/
 
-
-# Editor directories and files
+# Editor
 .vscode/*
 !.vscode/extensions.json
 .idea

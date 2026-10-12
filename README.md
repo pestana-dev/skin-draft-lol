@@ -1,69 +1,113 @@
 # Skin Draft LoL
 
-Aplicação web para amigos cadastrarem coleções de skins de League of Legends, criarem salas e descobrirem combinações temáticas possíveis (do time inteiro às duplas).
+Companion de PC para amigos combinarem skins temáticas no League of Legends — sem criar conta.
 
-**Stack:** React + TypeScript + Vite · Tailwind CSS · Supabase (Auth, PostgreSQL, Realtime, RLS)
+**Stack:** React + Vite · Tauri 2 · Supabase · identidade via LCU (Riot ID / puuid)
 
-## Começar
+Detalhes em [ARCHITECTURE.md](./ARCHITECTURE.md).
 
-1. Crie um projeto no [Supabase](https://supabase.com).
-2. No SQL Editor, execute as migrations em ordem:
-   `001_initial.sql`, `002_aram_pool.sql` e `003_theme_matches.sql`.
-3. Em Authentication → Providers, mantenha Email habilitado (para MVP local, desative “Confirm email” se quiser login imediato).
-4. Copie as chaves:
+## Como funciona
+
+1. Abra o **League Client** e o **Skin Draft**.
+2. O app sincroniza sua coleção de skins automaticamente.
+3. Entre num party/lobby no LoL — o lobby do Skin Draft monta sozinho com os Riot IDs do grupo.
+4. Veja combinações temáticas mesmo se um amigo não tiver o app aberto (usa a coleção que ele já salvou antes).
+
+## Estrutura
+
+```
+apps/web        UI React (dentro do Tauri)
+apps/desktop    App PC + LCU (Rust)
+scripts/        import Data Dragon, sync Python legado
+supabase/       migrations SQL (001 → 007)
+```
+
+## Setup (dev)
+
+1. Projeto no [Supabase](https://supabase.com).
+2. No SQL Editor, execute as migrations em ordem (`001` … `007`).
+3. Configure o `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-Preencha `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` (painel Connect).
-
-5. Instale, importe o catálogo e rode:
-
 ```bash
 npm install
 npm run import:catalog
-npm run dev
+npm run import:roles
 ```
 
-Sem secret key, o import gera `supabase/seed-catalog.sql` — cole no **SQL Editor** do Supabase e Execute. Com `SUPABASE_SECRET_KEY` no `.env`, o import grava direto via API.
-
-## Fluxo do MVP
-
-| Rota | Função |
-| --- | --- |
-| `/` | Criar / entrar em sala, atalhos |
-| `/collection` | Catálogo + toggle de skins possuídas |
-| `/room/:id` | Lobby, pool ARAM, prontidão |
-| `/room/:id/matches` | Combinações temáticas ranqueadas |
-| `/history` | Salas anteriores |
-
-## Combinações temáticas
-
-A RPC `analyze_theme_matches` lista temas em que **2+** participantes têm skin, do maior grupo às duplas, com uma skin sugerida por pessoa. Com `aram_pool` preenchido (sync LCU), só entram skins desses campeões.
-
-## Pool ARAM (LCU)
-
-Quem estiver com o **League aberto na select do ARAM** roda o sync local. O lobby atualiza o pool em tempo real; quit/reroll entram sozinhos.
+Pré-requisito desktop: [Rust / rustup](https://rustup.rs).
 
 ```bash
-npm run sync:aram -- --room=CODIGO
+npm run dev:desktop
 ```
 
-**Atalho no Windows:** rode uma vez `scripts\install-aram-shortcut.bat` — cria **Skin Draft ARAM** na área de trabalho. Ao abrir, pede o código da sala (e lembra o último).
+## Distribuir para amigos (GitHub Releases)
 
-Requer Node.js no PATH e o client do LoL (lê o `lockfile`). Sem pool, a análise usa a coleção inteira; com pool, só skins desses campeões.
+O instalador Windows é gerado pelo workflow [`.github/workflows/release.yml`](./.github/workflows/release.yml). Cada release publica o `.exe` e um `latest.json` — o app checa updates sozinho.
 
-## Estrutura
+### 1. Secrets no GitHub
 
+Em **Settings → Secrets and variables → Actions**, crie:
+
+| Secret | Valor |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | Conteúdo de `apps/desktop/.tauri-keys/skin-draft.key` (só no seu PC; nunca commit) |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Senha da chave (vazio se não tiver) |
+| `VITE_SUPABASE_URL` | URL do projeto Supabase |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Chave publishable (embutida no exe para os amigos) |
+
+A chave pública já está em `tauri.conf.json`. A privada fica só em `.tauri-keys/` (gitignored) e no secret.
+
+### 2. Publicar uma versão
+
+1. Suba a `version` em `apps/desktop/src-tauri/tauri.conf.json` (e opcionalmente nos `package.json`).
+2. Commit + push, depois:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```
-src/                 # UI React
-supabase/migrations/ # Schema, RLS, RPCs
-scripts/             # Data Dragon + sync ARAM (LCU)
+
+3. O Action gera o Release com o instalador NSIS.
+4. Mande o link do Release / `.exe` para os amigos. Nas próximas tags, o banner **Atualizar agora** no app baixa a versão nova.
+
+### Build local (opcional)
+
+```bash
+# PowerShell — assinatura (mesma chave do secret)
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw apps\desktop\.tauri-keys\skin-draft.key
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""  # se houver senha
+
+npm run build:desktop
 ```
 
-## Fora do MVP
+## Variáveis
 
-- Importação automática do inventário Riot
-- Auth Riot / app desktop polido
-- Ranking, IA e sincronização de compras
+| Variável | Uso |
+| --- | --- |
+| `VITE_SUPABASE_URL` | UI + bake no release |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | UI + bake no release |
+| `SUPABASE_URL` | Desktop / import (opcional se igual à VITE_) |
+| `SUPABASE_SECRET_KEY` | Preferida no PC local e `import:catalog` |
+| `TAURI_SIGNING_PRIVATE_KEY` | Assina artefatos de update (CI / build release) |
+
+## Sync LCU legado (Python)
+
+Ainda disponível até o instalador Tauri cobrir tudo:
+
+```bash
+npm run build:aram-exe
+```
+
+## Comandos
+
+| Comando | O quê |
+| --- | --- |
+| `npm run dev:desktop` | App Tauri + LCU |
+| `npm run dev` | Só UI no browser (sem sync LCU) |
+| `npm run import:catalog` | Importa skins (pt_BR) |
+| `npm run import:roles` | Roles SR (Meraki) |
+| `npm run build:desktop` | Instalador local |
