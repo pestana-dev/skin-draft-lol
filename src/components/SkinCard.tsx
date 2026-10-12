@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { skinImageCandidates } from '../lib/skinImage'
 import type { Skin } from '../lib/types'
 
 type Props = {
@@ -11,6 +13,9 @@ type Props = {
 export function SkinCard({ skin, owned = false, onToggle, busy, compact }: Props) {
   const championName = skin.champions?.name
   const interactive = Boolean(onToggle)
+  const candidates = skinImageCandidates(skin)
+  const [imageIndex, setImageIndex] = useState(0)
+  const src = candidates[imageIndex]
 
   return (
     <button
@@ -27,11 +32,14 @@ export function SkinCard({ skin, owned = false, onToggle, busy, compact }: Props
       ].join(' ')}
     >
       <div className={compact ? 'aspect-[3/4]' : 'aspect-[16/9] sm:aspect-[3/4]'}>
-        {skin.tile_url || skin.splash_url ? (
+        {src ? (
           <img
-            src={skin.tile_url || skin.splash_url || ''}
+            src={src}
             alt={skin.name}
             loading="lazy"
+            onError={() => {
+              setImageIndex((i) => (i + 1 < candidates.length ? i + 1 : i))
+            }}
             className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
           />
         ) : (

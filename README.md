@@ -15,15 +15,17 @@ Aplicação web para amigos cadastrarem coleções de skins de League of Legends
 cp .env.example .env
 ```
 
-Preencha `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`. Para importar o catálogo, use também `SUPABASE_SERVICE_ROLE_KEY`.
+Preencha `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` (painel Connect).
 
-5. Instale e rode:
+5. Instale, importe o catálogo e rode:
 
 ```bash
 npm install
 npm run import:catalog
 npm run dev
 ```
+
+Sem secret key, o import gera `supabase/seed-catalog.sql` — cole no **SQL Editor** do Supabase e Execute. Com `SUPABASE_SECRET_KEY` no `.env`, o import grava direto via API.
 
 ## Fluxo do MVP
 

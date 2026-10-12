@@ -22,7 +22,7 @@ export function AuthPage() {
       <div className="mx-auto max-w-md rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)] p-6">
         <h1 className="font-display text-2xl">Supabase não configurado</h1>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
-          Defina <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_ANON_KEY</code>.
+          Defina <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_PUBLISHABLE_KEY</code>.
         </p>
         <Link to="/" className="mt-4 inline-block text-[var(--teal-soft)]">
           Voltar

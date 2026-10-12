@@ -3,8 +3,32 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { RequireAuth } from '../components/RequireAuth'
 import { useAuth } from '../contexts/AuthContext'
 import { formatError, modeLabel } from '../lib/format'
+import { skinImageCandidates } from '../lib/skinImage'
 import { supabase } from '../lib/supabase'
-import type { DraftResult, DraftRoom } from '../lib/types'
+import type { DraftResult, DraftRoom, Skin } from '../lib/types'
+
+function ResultSplash({ skin }: { skin: Skin }) {
+  const candidates = skinImageCandidates(skin)
+  const [index, setIndex] = useState(0)
+  const src = candidates[index]
+
+  if (!src) {
+    return (
+      <div className="flex h-full items-center justify-center bg-[var(--ink-soft)] text-[var(--text-muted)]">
+        Sem splash
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={src}
+      alt={skin.name}
+      className="h-full w-full object-cover"
+      onError={() => setIndex((i) => (i + 1 < candidates.length ? i + 1 : i))}
+    />
+  )
+}
 
 function ResultInner() {
   const { roomId } = useParams<{ roomId: string }>()
@@ -190,13 +214,7 @@ function ResultInner() {
             style={{ animationDelay: `${index * 0.08}s` }}
           >
             <div className="aspect-[16/9] overflow-hidden">
-              {r.skins?.splash_url ? (
-                <img
-                  src={r.skins.splash_url}
-                  alt={r.skins.name}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
+              {r.skins ? <ResultSplash skin={r.skins} /> : (
                 <div className="flex h-full items-center justify-center bg-[var(--ink-soft)] text-[var(--text-muted)]">
                   Sem splash
                 </div>
