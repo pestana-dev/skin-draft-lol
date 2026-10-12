@@ -153,21 +153,25 @@ async function fetchCatalog() {
   console.log('Buscando versão do Data Dragon…')
   const versions = await fetch(`${DDRAGON}/api/versions.json`).then((r) => r.json())
   const version = versions[0]
-  console.log(`Versão: ${version}`)
+  console.log(`Versão: ${version} · nomes em pt_BR`)
 
-  const championsJson = await fetch(
-    `${DDRAGON}/cdn/${version}/data/en_US/champion.json`,
-  ).then((r) => r.json())
+  const [championsEn, championsBr] = await Promise.all([
+    fetch(`${DDRAGON}/cdn/${version}/data/en_US/champion.json`).then((r) => r.json()),
+    fetch(`${DDRAGON}/cdn/${version}/data/pt_BR/champion.json`).then((r) => r.json()),
+  ])
 
-  const championList = Object.values(championsJson.data)
+  const championList = Object.values(championsEn.data)
   console.log(`${championList.length} campeões — baixando skins…`)
 
-  const champions = championList.map((c) => ({
-    id: c.id,
-    name: c.name,
-    key: c.key,
-    image_url: `${DDRAGON}/cdn/${version}/img/champion/${c.image.full}`,
-  }))
+  const champions = championList.map((c) => {
+    const br = championsBr.data[c.id]
+    return {
+      id: c.id,
+      name: br?.name ?? c.name,
+      key: c.key,
+      image_url: `${DDRAGON}/cdn/${version}/img/champion/${c.image.full}`,
+    }
+  })
 
   const themes = THEME_RULES.map(({ slug, name }) => ({ slug, name }))
   const skins = []
@@ -176,28 +180,42 @@ async function fetchCatalog() {
   let chromasSkipped = 0
 
   for (const [index, champ] of championList.entries()) {
-    const detail = await fetch(
-      `${DDRAGON}/cdn/${version}/data/en_US/champion/${champ.id}.json`,
-    ).then((r) => r.json())
+    const [detailEn, detailBr] = await Promise.all([
+      fetch(`${DDRAGON}/cdn/${version}/data/en_US/champion/${champ.id}.json`).then((r) =>
+        r.json(),
+      ),
+      fetch(`${DDRAGON}/cdn/${version}/data/pt_BR/champion/${champ.id}.json`).then((r) =>
+        r.json(),
+      ),
+    ])
 
-    const full = detail.data[champ.id]
-    /** Nomes já importados deste campeão — usado para detectar chroma. */
-    const seenNames = new Set()
+    const enSkins = detailEn.data[champ.id].skins
+    const brSkins = detailBr.data[champ.id].skins
+    const brNameByNum = new Map(brSkins.map((s) => [s.num, s.name]))
+    const championBrName = championsBr.data[champ.id]?.name ?? champ.name
 
-    for (const skin of full.skins) {
+    /** Nomes EN já importados — detecta chroma com mais estabilidade. */
+    const seenEnNames = new Set()
+
+    for (const skin of enSkins) {
       if (skin.num === 0) continue
 
-      const displayName = normalizeName(
+      const enName = normalizeName(
         skin.name === 'default' ? champ.name : skin.name,
       )
 
       // Qualquer "Skin (Variante)" — chromas, ranks, BADDEST, etc.
-      if (chromaBaseName(displayName)) {
+      if (chromaBaseName(enName)) {
         chromasSkipped += 1
         continue
       }
 
-      seenNames.add(displayName)
+      seenEnNames.add(enName)
+
+      const brRaw = brNameByNum.get(skin.num)
+      const displayName = normalizeName(
+        !brRaw || brRaw === 'default' ? championBrName : brRaw,
+      )
 
       const skinId = `${champ.id}_${skin.num}`
       const art = skinArtUrls(champ.id, skin.num)
@@ -212,7 +230,8 @@ async function fetchCatalog() {
         num: skin.num,
       })
 
-      for (const theme of inferThemes(skin.name)) {
+      // Temas usam o nome EN (regex das linhas temáticas)
+      for (const theme of inferThemes(enName)) {
         themeLinks.push({ slug: theme.slug, skin_id: skinId })
       }
     }
