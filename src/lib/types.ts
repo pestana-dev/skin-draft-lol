@@ -1,4 +1,4 @@
-export type DraftMode = 'theme' | 'color' | 'free'
+export type DraftMode = 'theme' | 'color'
 export type RoomStatus = 'waiting' | 'ready' | 'completed' | 'cancelled'
 
 export type Champion = {
@@ -41,6 +41,8 @@ export type DraftRoom = {
   status: RoomStatus
   settings: {
     avoid_duplicate_skins?: boolean
+    aram_pool?: string[]
+    aram_synced_at?: string | null
   }
   created_at: string
 }
@@ -71,16 +73,30 @@ export type DraftResult = {
   profiles?: Profile | null
 }
 
-export type RunDraftResponse = {
+export type ThemeMatchMember = {
+  user_id: string
+  display_name: string
+  skin_id: string
+  skin_name: string
+  splash_url: string | null
+  tile_url: string | null
+  champion_id: string
+  champion_name: string
+}
+
+export type ThemeMatch = {
+  theme_id: string
+  theme_slug: string
+  theme_name: string
+  match_count: number
+  participant_total: number
+  members: ThemeMatchMember[]
+}
+
+export type ThemeMatchesResponse = {
   room_id: string
-  round: number
-  mode: DraftMode
-  theme_slug: string | null
-  theme_name: string | null
-  results: Array<{
-    user_id: string
-    skin_id: string
-    slot: number
-    round: number
-  }>
+  room_code: string
+  participant_total: number
+  aram_pool: string[]
+  matches: ThemeMatch[]
 }

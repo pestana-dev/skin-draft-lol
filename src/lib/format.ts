@@ -20,3 +20,10 @@ export function modeLabel(mode: string): string {
       return mode
   }
 }
+
+export function matchSizeLabel(count: number, total: number): string {
+  if (count >= total && total > 0) return `Time completo (${count})`
+  if (count === 2) return 'Dupla'
+  if (count === 3) return 'Trio'
+  return `${count} de ${total}`
+}

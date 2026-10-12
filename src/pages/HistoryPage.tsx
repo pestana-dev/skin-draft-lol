@@ -88,10 +88,10 @@ function HistoryInner() {
                   Lobby
                 </Link>
                 <Link
-                  to={`/room/${room.id}/result`}
+                  to={`/room/${room.id}/matches`}
                   className="rounded-md bg-[var(--teal)] px-3 py-1.5 text-sm font-medium text-[var(--ink)]"
                 >
-                  Resultado
+                  Combinações
                 </Link>
               </div>
             </li>

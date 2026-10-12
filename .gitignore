@@ -16,6 +16,8 @@ dist-ssr
 !.env.example
 supabase/seed-catalog.sql
 supabase/seed-parts/
+scripts/.aram-room.txt
+
 
 
 # Editor directories and files

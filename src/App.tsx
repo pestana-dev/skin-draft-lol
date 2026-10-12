@@ -6,6 +6,7 @@ import { CollectionPage } from './pages/CollectionPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { HomePage } from './pages/HomePage'
 import { LobbyPage } from './pages/LobbyPage'
+import { MatchesPage } from './pages/MatchesPage'
 import { ResultPage } from './pages/ResultPage'
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
             <Route path="collection" element={<CollectionPage />} />
             <Route path="history" element={<HistoryPage />} />
             <Route path="room/:roomId" element={<LobbyPage />} />
+            <Route path="room/:roomId/matches" element={<MatchesPage />} />
             <Route path="room/:roomId/result" element={<ResultPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

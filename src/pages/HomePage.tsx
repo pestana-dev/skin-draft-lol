@@ -1,15 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { formatError, modeLabel } from '../lib/format'
+import { formatError } from '../lib/format'
 import { supabase } from '../lib/supabase'
-import type { DraftMode } from '../lib/types'
 
 export function HomePage() {
   const { user, configured } = useAuth()
   const navigate = useNavigate()
   const [code, setCode] = useState('')
-  const [mode, setMode] = useState<DraftMode>('free')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -22,7 +20,7 @@ export function HomePage() {
     setError(null)
     try {
       const { data, error: rpcError } = await supabase.rpc('create_draft_room', {
-        p_mode: mode,
+        p_mode: 'theme',
       })
       if (rpcError) throw rpcError
       navigate(`/room/${data.id}`)
@@ -68,8 +66,8 @@ export function HomePage() {
             </span>
           </p>
           <p className="mt-5 max-w-xl text-base text-[var(--text-muted)] sm:text-lg">
-            Cadastre sua coleção, entre numa sala com amigos e sorteie skins que
-            combinam — por tema, por cor ou no modo livre.
+            Cadastrem as coleções e vejam quais linhas temáticas dá pra combinar —
+            do time inteiro às duplas — inclusive filtrando pelo pool do ARAM.
           </p>
 
           <div className="mt-8 flex flex-wrap gap-3">
@@ -83,7 +81,7 @@ export function HomePage() {
               to="/history"
               className="rounded-md border border-transparent px-4 py-2.5 text-sm text-[var(--text-muted)] transition hover:text-[var(--text-strong)]"
             >
-              Drafts anteriores
+              Salas anteriores
             </Link>
           </div>
         </div>
@@ -92,29 +90,8 @@ export function HomePage() {
           <div>
             <h2 className="font-display text-xl">Criar sala</h2>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              O anfitrião define o modo e compartilha o código.
+              O sistema lista combinações temáticas entre as coleções do grupo.
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {(['free', 'theme', 'color'] as DraftMode[]).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  disabled={m === 'color'}
-                  onClick={() => setMode(m)}
-                  title={m === 'color' ? 'Disponível após enriquecimento de cores' : undefined}
-                  className={[
-                    'rounded-md px-3 py-1.5 text-sm transition',
-                    mode === m
-                      ? 'bg-[var(--teal)] text-[var(--ink)]'
-                      : 'border border-[var(--line)] text-[var(--text-muted)] hover:text-[var(--text)]',
-                    m === 'color' ? 'opacity-45' : '',
-                  ].join(' ')}
-                >
-                  {modeLabel(m)}
-                  {m === 'color' ? ' (em breve)' : ''}
-                </button>
-              ))}
-            </div>
             <button
               type="button"
               disabled={busy || !configured}

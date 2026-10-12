@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "import:catalog": "node scripts/import-catalog.mjs"
+    "import:catalog": "node scripts/import-catalog.mjs",
+    "sync:aram": "node scripts/sync-aram.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",
