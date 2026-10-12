@@ -94,8 +94,13 @@ export function MatchesPage() {
 
   const matches = data?.matches ?? []
   const total = data?.participant_total ?? 0
-  const queueKind = data?.queue_kind ?? 'unknown'
-  const filterAram = Boolean(data?.filter_aram)
+  const filterAram =
+    Boolean(data?.filter_aram) ||
+    ((data?.aram_pool?.length ?? 0) > 0 && data?.queue_kind !== 'sr')
+  const queueKind =
+    data?.queue_kind === 'unknown' && filterAram
+      ? 'aram'
+      : (data?.queue_kind ?? 'unknown')
 
   return (
     <div className="animate-fade-up">

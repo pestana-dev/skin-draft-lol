@@ -5,9 +5,12 @@ App de PC: embute `@skin-draft/web` e fala com o LCU (summoner, inventário, par
 ## Pré-requisitos
 
 1. **Rust** — https://rustup.rs  
-2. No Windows: build tools do Visual Studio (C++), se o `tauri` pedir  
-3. WebView2 (Windows 10/11)  
-4. `.env` na raiz com `SUPABASE_URL` + chave (secret ou publishable)
+2. **Windows:** build tools do Visual Studio (C++) + WebView2  
+   **macOS:** Xcode CLT (`xcode-select --install`)  
+3. `.env` na raiz com `SUPABASE_URL` + chave (secret ou publishable)  
+4. Lockfile do LoL: Windows em `Riot Games\…\lockfile`; Mac em  
+   `~/Library/Application Support/Riot Games/League of Legends/lockfile`  
+   (ou `LEAGUE_LOCKFILE` apontando para o arquivo)
 
 ## Comandos
 

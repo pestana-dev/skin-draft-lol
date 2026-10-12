@@ -43,10 +43,15 @@ pub struct PartySnapshot {
 }
 
 fn lockfile_candidates() -> Vec<PathBuf> {
-    let mut paths = vec![
-        PathBuf::from(r"C:\Riot Games\League of Legends\lockfile"),
-        PathBuf::from(r"D:\Riot Games\League of Legends\lockfile"),
-    ];
+    let mut paths = Vec::new();
+
+    if let Ok(custom) = env::var("LEAGUE_LOCKFILE") {
+        paths.push(PathBuf::from(custom));
+    }
+
+    // Windows
+    paths.push(PathBuf::from(r"C:\Riot Games\League of Legends\lockfile"));
+    paths.push(PathBuf::from(r"D:\Riot Games\League of Legends\lockfile"));
     if let Ok(local) = env::var("LOCALAPPDATA") {
         paths.push(
             PathBuf::from(local)
@@ -55,15 +60,27 @@ fn lockfile_candidates() -> Vec<PathBuf> {
                 .join("lockfile"),
         );
     }
-    paths.push(
-        PathBuf::from(env::var("USERPROFILE").unwrap_or_default())
-            .join("Riot Games")
-            .join("League of Legends")
-            .join("lockfile"),
-    );
-    if let Ok(custom) = env::var("LEAGUE_LOCKFILE") {
-        paths.insert(0, PathBuf::from(custom));
+    if let Ok(profile) = env::var("USERPROFILE") {
+        paths.push(
+            PathBuf::from(profile)
+                .join("Riot Games")
+                .join("League of Legends")
+                .join("lockfile"),
+        );
     }
+
+    // macOS (League / Riot Client)
+    if let Ok(home) = env::var("HOME") {
+        let home = PathBuf::from(home);
+        paths.push(
+            home.join("Library/Application Support/Riot Games/League of Legends/lockfile"),
+        );
+        paths.push(home.join("Library/Application Support/League of Legends/lockfile"));
+        paths.push(PathBuf::from(
+            "/Applications/League of Legends.app/Contents/LoL/lockfile",
+        ));
+    }
+
     paths
 }
 
@@ -192,7 +209,9 @@ fn member_from_value(v: &Value) -> Option<PartyMember> {
 
 pub fn queue_kind_from_id(queue_id: Option<i64>) -> String {
     match queue_id {
-        Some(450) | Some(930) | Some(1010) | Some(1300) | Some(1700) => "aram".into(),
+        Some(450) | Some(930) | Some(1010) | Some(1300) | Some(1700) | Some(1900) => {
+            "aram".into()
+        }
         Some(400) | Some(420) | Some(430) | Some(440) | Some(490) | Some(700) | Some(900) => {
             "sr".into()
         }
@@ -201,9 +220,45 @@ pub fn queue_kind_from_id(queue_id: Option<i64>) -> String {
 }
 
 fn extract_queue_id(data: &Value) -> Option<i64> {
-    data.pointer("/gameConfig/queueId")
-        .or_else(|| data.get("queueId"))
-        .and_then(|v| v.as_i64())
+    const PATHS: &[&str] = &[
+        "/gameConfig/queueId",
+        "/queueId",
+        "/gameData/queue/id",
+        "/gameData/queueId",
+    ];
+    for path in PATHS {
+        if let Some(id) = data.pointer(path).and_then(|v| v.as_i64()).filter(|&id| id > 0)
+        {
+            return Some(id);
+        }
+    }
+    data.get("queueId").and_then(|v| v.as_i64()).filter(|&id| id > 0)
+}
+
+fn resolve_queue(lock: &Lockfile, primary: &Value) -> (Option<i64>, String) {
+    let mut queue_id = extract_queue_id(primary);
+    if queue_id.is_none() {
+        if let Ok(Some(session)) = lcu_get(lock, "/lol-champ-select/v1/session") {
+            queue_id = extract_queue_id(&session);
+        }
+    }
+    if queue_id.is_none() {
+        if let Ok(Some(flow)) = lcu_get(lock, "/lol-gameflow/v1/session") {
+            queue_id = extract_queue_id(&flow);
+        }
+    }
+    let mut kind = queue_kind_from_id(queue_id);
+    // Howling Abyss (map 12) sem queueId conhecido → ARAM
+    if kind == "unknown" {
+        let map_id = primary
+            .pointer("/gameConfig/mapId")
+            .or_else(|| primary.pointer("/map/id"))
+            .and_then(|v| v.as_i64());
+        if map_id == Some(12) {
+            kind = "aram".into();
+        }
+    }
+    (queue_id, kind)
 }
 
 fn collect_members(data: &Value) -> Vec<PartyMember> {
@@ -255,11 +310,17 @@ fn party_key_from_champ_select(session: &Value) -> Option<(String, Vec<PartyMemb
     Some((format!("cs:{}", puuids.join("-")), members))
 }
 
+/// Extrai championIds numéricos do LCU (ex.: 103). O Supabase mapeia via
+/// `champions.key` → `champions.id` (ex.: Ahri) em `map_lcu_champion_ids`.
 fn extract_champion_keys(session: &Value) -> Vec<String> {
     let mut keys = std::collections::BTreeSet::new();
     let mut add = |cid: Option<&Value>| {
         if let Some(n) = cid.and_then(|v| v.as_i64()).filter(|&x| x > 0) {
             keys.insert(n.to_string());
+        } else if let Some(s) = cid.and_then(|v| v.as_str()) {
+            if s.chars().all(|c| c.is_ascii_digit()) && s != "0" {
+                keys.insert(s.to_string());
+            }
         }
     };
     if let Some(bench) = session.get("benchChampions").and_then(|b| b.as_array()) {
@@ -271,6 +332,17 @@ fn extract_champion_keys(session: &Value) -> Vec<String> {
         if let Some(team) = session.get(team_key).and_then(|t| t.as_array()) {
             for player in team {
                 add(player.get("championId"));
+                add(player.get("selectedChampionId"));
+                add(player.get("championPickIntent"));
+            }
+        }
+    }
+    // Picks/bans nas actions (quando o bench ainda não refletiu o pick)
+    if let Some(actions) = session.get("actions").and_then(|a| a.as_array()) {
+        for group in actions {
+            let Some(arr) = group.as_array() else { continue };
+            for action in arr {
+                add(action.get("championId"));
             }
         }
     }
@@ -362,18 +434,14 @@ pub fn detect_party(lock: &Lockfile) -> Result<Option<PartySnapshot>, String> {
                         });
                     }
                 }
-                let queue_id = extract_queue_id(&data);
-                let queue_kind = queue_kind_from_id(queue_id);
-                let aram = if queue_kind == "aram" {
-                    lcu_get(lock, "/lol-champ-select/v1/session")?
-                        .map(|s| extract_champion_keys(&s))
-                        .unwrap_or_default()
-                } else {
-                    // Ainda tenta pool se estiver na select
-                    lcu_get(lock, "/lol-champ-select/v1/session")?
-                        .map(|s| extract_champion_keys(&s))
-                        .unwrap_or_default()
-                };
+                let (queue_id, mut queue_kind) = resolve_queue(lock, &data);
+                let aram = lcu_get(lock, "/lol-champ-select/v1/session")?
+                    .map(|s| extract_champion_keys(&s))
+                    .unwrap_or_default();
+                // Pool da select ARAM presente, mas fila não classificada → tratar como ARAM
+                if !aram.is_empty() && queue_kind == "unknown" {
+                    queue_kind = "aram".into();
+                }
                 return Ok(Some(PartySnapshot {
                     party_id,
                     source: path.to_string(),
@@ -388,13 +456,16 @@ pub fn detect_party(lock: &Lockfile) -> Result<Option<PartySnapshot>, String> {
 
     if let Some(session) = lcu_get(lock, "/lol-champ-select/v1/session")? {
         if let Some((party_id, members)) = party_key_from_champ_select(&session) {
-            let queue_id = extract_queue_id(&session);
-            let queue_kind = queue_kind_from_id(queue_id);
+            let (queue_id, mut queue_kind) = resolve_queue(lock, &session);
+            let aram = extract_champion_keys(&session);
+            if !aram.is_empty() && queue_kind == "unknown" {
+                queue_kind = "aram".into();
+            }
             return Ok(Some(PartySnapshot {
                 party_id,
                 source: "champ-select".into(),
                 members,
-                aram_champion_ids: extract_champion_keys(&session),
+                aram_champion_ids: aram,
                 queue_id,
                 queue_kind,
             }));

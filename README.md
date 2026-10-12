@@ -46,7 +46,9 @@ npm run dev:desktop
 
 ## Distribuir para amigos (GitHub Releases)
 
-O instalador Windows é gerado pelo workflow [`.github/workflows/release.yml`](./.github/workflows/release.yml). Cada release publica o `.exe` e um `latest.json` — o app checa updates sozinho.
+O workflow [`.github/workflows/release.yml`](./.github/workflows/release.yml) gera instaladores **Windows** (`.exe`) e **macOS** (`.dmg`, Apple Silicon + Intel), além do `latest.json` para update automático.
+
+No Mac, se o sistema bloquear a abertura (app sem notarização Apple): botão direito no app → **Abrir**.
 
 ### 1. Secrets no GitHub
 
@@ -71,8 +73,8 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-3. O Action gera o Release com o instalador NSIS.
-4. Mande o link do Release / `.exe` para os amigos. Nas próximas tags, o banner **Atualizar agora** no app baixa a versão nova.
+3. O Action gera o Release com `.exe` (Windows) e `.dmg` (Mac).
+4. Mande o link do Release aos amigos. Nas próximas tags, o banner **Atualizar agora** no app baixa a versão nova.
 
 ### Build local (opcional)
 

@@ -11,7 +11,20 @@ permissions:
 
 jobs:
   publish-tauri:
-    runs-on: windows-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ''
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +36,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install frontend dependencies
         run: npm ci
@@ -42,11 +57,13 @@ jobs:
           tagName: v__VERSION__
           releaseName: Skin Draft LoL v__VERSION__
           releaseBody: |
-            Instalador Windows (NSIS) + update automático via `latest.json`.
+            Instaladores Windows (`.exe`) e macOS (`.dmg`) + update automático via `latest.json`.
 
-            1. Baixe o `.exe` nos Assets
-            2. Instale e abra o League Client
-            3. Abra o Skin Draft — ele sincroniza sozinho
+            **Windows:** baixe o `*-setup.exe`, instale, abra o League Client e o Skin Draft.
+
+            **Mac:** baixe o `.dmg` da sua arquitetura (Apple Silicon `aarch64` ou Intel `x86_64`).
+            Se o macOS bloquear: clique com o botão direito → Abrir (app ainda não é notarizado pela Apple).
           releaseDraft: false
           prerelease: false
           uploadUpdaterJson: true
+          args: ${{ matrix.args }}

@@ -135,7 +135,9 @@ export function LobbyPage() {
         </h1>
         <p className="mt-1 text-[var(--text-muted)]">
           Party do LoL
-          {room.settings?.queue_kind === 'aram'
+          {room.settings?.queue_kind === 'aram' ||
+          ((room.settings?.aram_pool?.length ?? 0) > 0 &&
+            room.settings?.queue_kind !== 'sr')
             ? ' · ARAM'
             : room.settings?.queue_kind === 'sr'
               ? ' · Summoner\'s Rift'
