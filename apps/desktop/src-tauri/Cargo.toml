@@ -1,6 +1,6 @@
 [package]
 name = "skin-draft-desktop"
-version = "0.1.2"
+version = "0.1.3"
 description = "Skin Draft LoL desktop (Tauri)"
 authors = ["pestana-dev"]
 edition = "2021"

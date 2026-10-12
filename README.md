@@ -48,7 +48,13 @@ npm run dev:desktop
 
 O workflow [`.github/workflows/release.yml`](./.github/workflows/release.yml) gera instaladores **Windows** (`.exe`) e **macOS** (`.dmg`, Apple Silicon + Intel), além do `latest.json` para update automático.
 
-No Mac, se o sistema bloquear a abertura (app sem notarização Apple): botão direito no app → **Abrir**.
+No Mac, o build usa assinatura **ad-hoc** (sem conta Apple Developer). Se o sistema disser que o app está “danificado”:
+
+```bash
+xattr -cr "/Applications/Skin Draft LoL.app"
+```
+
+Ou botão direito no `.app` → **Abrir**. Para abrir com duplo clique sem aviso, é preciso notarizar com Apple Developer (~US$99/ano).
 
 ### 1. Secrets no GitHub
 
