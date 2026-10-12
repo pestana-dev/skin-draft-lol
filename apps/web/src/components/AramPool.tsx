@@ -16,7 +16,7 @@ export function AramPool({
   busy,
   onClear,
 }: Props) {
-  const syncLabel = syncedAt
+  const lastSync = syncedAt
     ? new Date(syncedAt).toLocaleTimeString('pt-BR', {
         hour: '2-digit',
         minute: '2-digit',
@@ -28,9 +28,9 @@ export function AramPool({
     <section className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)]/80 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="font-display text-lg">Pool ARAM</h2>
+          <h2 className="font-display text-lg">Campeões do ARAM</h2>
           <p className="mt-1 text-sm text-[var(--text-muted)]">
-            Vem do party/select do LoL pelo app desktop — sem digitar código.
+            Lista da select ARAM do party.
           </p>
         </div>
         <span
@@ -41,7 +41,9 @@ export function AramPool({
               : 'bg-[var(--ink-soft)] text-[var(--text-muted)]',
           ].join(' ')}
         >
-          {champions.length ? `${champions.length} champs` : 'Aguardando sync'}
+          {champions.length
+            ? `${champions.length} campeões`
+            : 'Aguardando sincronização'}
         </span>
       </div>
 
@@ -73,7 +75,7 @@ export function AramPool({
         </ul>
       ) : (
         <div className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[var(--ink-soft)]/50 p-4 text-sm text-[var(--text-muted)]">
-          Entre na select ARAM com o party — o app atualiza este pool sozinho.
+          Entre na select ARAM para atualizar a lista.
         </div>
       )}
 
@@ -85,11 +87,13 @@ export function AramPool({
             onClick={onClear}
             className="rounded-md border border-[var(--danger)]/40 px-3 py-1.5 text-sm text-[var(--danger)] disabled:opacity-50"
           >
-            Limpar pool
+            Limpar lista
           </button>
         ) : null}
-        {syncLabel ? (
-          <span className="text-xs text-[var(--text-muted)]">Último sync: {syncLabel}</span>
+        {lastSync ? (
+          <span className="text-xs text-[var(--text-muted)]">
+            Última sincronização: {lastSync}
+          </span>
         ) : null}
       </div>
     </section>

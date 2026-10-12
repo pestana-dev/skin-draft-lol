@@ -65,9 +65,9 @@ export function UpdateBanner() {
         }
       })
       await relaunch()
-    } catch (e) {
+    } catch {
       setPhase('error')
-      setError(e instanceof Error ? e.message : 'Falha ao atualizar')
+      setError('Não foi possível atualizar.')
     }
   }
 
@@ -86,7 +86,7 @@ export function UpdateBanner() {
           <p className="text-[var(--teal-soft)]">{progress ?? 'Atualizando…'}</p>
         )}
         {phase === 'error' && (
-          <p className="text-[var(--danger)]">{error ?? 'Erro ao atualizar'}</p>
+          <p className="text-[var(--danger)]">{error ?? 'Não foi possível atualizar.'}</p>
         )}
       </div>
       {(phase === 'available' || phase === 'error') && (

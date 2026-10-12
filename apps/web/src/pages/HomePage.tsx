@@ -1,18 +1,6 @@
 import { Link } from 'react-router-dom'
 import { usePlayer } from '../contexts/PlayerContext'
-
-function syncLabel(iso: string | null | undefined, skinCount: number | undefined) {
-  if (!iso) {
-    return skinCount && skinCount > 0
-      ? `${skinCount} skins`
-      : 'Nunca sincronizou'
-  }
-  const d = new Date(iso)
-  const mins = Math.round((Date.now() - d.getTime()) / 60000)
-  const when =
-    mins < 1 ? 'agora' : mins < 60 ? `há ${mins} min` : `há ${Math.round(mins / 60)} h`
-  return `${skinCount ?? 0} skins · ${when}`
-}
+import { collectionSyncLabel } from '../lib/format'
 
 export function HomePage() {
   const {
@@ -34,10 +22,9 @@ export function HomePage() {
   if (!configured) {
     return (
       <section className="animate-fade-up rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)] p-8">
-        <h1 className="font-display text-3xl">Configure o Supabase</h1>
+        <h1 className="font-display text-3xl">Configuração incompleta</h1>
         <p className="mt-2 text-[var(--text-muted)]">
-          Copie <code className="text-[var(--gold-soft)]">.env.example</code> para{' '}
-          <code className="text-[var(--gold-soft)]">.env</code> e preencha as chaves.
+          Falta configurar o Supabase neste ambiente.
         </p>
       </section>
     )
@@ -54,11 +41,8 @@ export function HomePage() {
           </span>
         </p>
         <p className="mt-5 max-w-xl text-base text-[var(--text-muted)] sm:text-lg">
-          Este produto roda no app de PC, conectado ao League Client. Abra com:
+          Abra o Skin Draft no app de PC.
         </p>
-        <pre className="mt-4 overflow-x-auto rounded-md border border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-sm text-[var(--gold-soft)]">
-          npm run dev:desktop
-        </pre>
       </section>
     )
   }
@@ -77,9 +61,7 @@ export function HomePage() {
             </span>
           </p>
           <p className="mt-5 max-w-xl text-base text-[var(--text-muted)] sm:text-lg">
-            Sem conta. O app lê o LoL, salva sua coleção e monta o lobby com quem
-            está no party — mesmo quem não abriu o Skin Draft, se já sincronizou
-            antes.
+            Combine skins temáticas com o party do LoL.
           </p>
 
           <div className="mt-8 flex flex-wrap gap-3">
@@ -109,7 +91,7 @@ export function HomePage() {
             <div>
               <p className="text-[var(--gold-soft)]">Abra o League Client</p>
               <p className="mt-1 text-sm text-[var(--text-muted)]">
-                {lcu?.message ?? 'Aguardando lockfile do LoL…'}
+                {lcu?.message ?? 'Aguardando o League Client…'}
               </p>
             </div>
           ) : (
@@ -122,7 +104,7 @@ export function HomePage() {
               </p>
               <p className="text-sm text-[var(--text-muted)]">
                 Coleção:{' '}
-                {syncLabel(me?.last_inventory_sync_at, me?.skin_count)}
+                {collectionSyncLabel(me?.last_inventory_sync_at, me?.skin_count)}
               </p>
               <button
                 type="button"
@@ -148,7 +130,7 @@ export function HomePage() {
             </h3>
             {!partyId ? (
               <p className="mt-2 text-sm text-[var(--text-muted)]">
-                Entre num lobby/party no LoL. O Skin Draft detecta sozinho.
+                Entre num party no LoL para começar.
               </p>
             ) : (
               <>
@@ -166,8 +148,8 @@ export function HomePage() {
                       </span>
                       <span className="text-xs text-[var(--text-muted)]">
                         {m.skin_count > 0
-                          ? syncLabel(m.last_inventory_sync_at, m.skin_count)
-                          : 'Sem coleção salva'}
+                          ? collectionSyncLabel(m.last_inventory_sync_at, m.skin_count)
+                          : 'Coleção ainda não salva'}
                       </span>
                     </li>
                   ))}
@@ -179,7 +161,7 @@ export function HomePage() {
                     onClick={() => void syncParty().catch(() => undefined)}
                     className="rounded-md border border-[var(--line-strong)] px-3 py-2 text-sm disabled:opacity-50"
                   >
-                    Atualizar party
+                    Atualizar lobby
                   </button>
                   {roomId ? (
                     <Link

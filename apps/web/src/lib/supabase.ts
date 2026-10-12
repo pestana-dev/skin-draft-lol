@@ -13,9 +13,7 @@ export const supabase: SupabaseClient = isSupabaseConfigured
 
 export function requireSupabase(): SupabaseClient {
   if (!isSupabaseConfigured) {
-    throw new Error(
-      'Configure VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY no arquivo .env',
-    )
+    throw new Error('Configuração incompleta. Falta configurar o Supabase neste ambiente.')
   }
   return supabase
 }

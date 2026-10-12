@@ -101,7 +101,7 @@ pub fn load_config() -> Result<AppConfig, String> {
 
     if url.is_empty() || key.is_empty() {
         return Err(
-            "Supabase não configurado. Defina SUPABASE_URL e SUPABASE_SECRET_KEY (ou publishable) no .env"
+            "Configuração incompleta. Falta configurar o Supabase neste ambiente."
                 .into(),
         );
     }

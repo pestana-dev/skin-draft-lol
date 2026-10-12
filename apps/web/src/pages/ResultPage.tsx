@@ -14,7 +14,7 @@ function ResultSplash({ skin }: { skin: Skin }) {
   if (!src) {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--ink-soft)] text-[var(--text-muted)]">
-        Sem splash
+        Sem imagem
       </div>
     )
   }
@@ -160,7 +160,7 @@ export function ResultPage() {
       <div className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)] p-6">
         <h1 className="font-display text-2xl">Sem resultado ainda</h1>
         <p className="mt-2 text-[var(--text-muted)]">
-          {error ?? 'Use as combinações temáticas no lobby.'}
+          {error ?? 'Ainda não há um sorteio nesta sala.'}
         </p>
         <Link to={`/room/${roomId}`} className="mt-4 inline-block text-[var(--teal-soft)]">
           Voltar ao lobby
@@ -222,7 +222,7 @@ export function ResultPage() {
                 <ResultSplash skin={r.skins} />
               ) : (
                 <div className="flex h-full items-center justify-center bg-[var(--ink-soft)] text-[var(--text-muted)]">
-                  Sem splash
+                  Sem imagem
                 </div>
               )}
             </div>

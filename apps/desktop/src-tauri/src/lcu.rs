@@ -279,13 +279,13 @@ fn extract_champion_keys(session: &Value) -> Vec<String> {
 
 pub fn current_summoner(lock: &Lockfile) -> Result<SummonerInfo, String> {
     let data = lcu_get(lock, "/lol-summoner/v1/current-summoner")?
-        .ok_or_else(|| "Summoner atual não encontrado (LoL logado?)".to_string())?;
+        .ok_or_else(|| "Conta do LoL não encontrada. Confirme se está logado.".to_string())?;
 
     let puuid = data
         .get("puuid")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "puuid ausente no summoner".to_string())?
+        .ok_or_else(|| "Não foi possível identificar a conta do LoL.".to_string())?
         .to_string();
 
     let game_name = data

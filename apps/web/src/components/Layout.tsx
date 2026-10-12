@@ -40,7 +40,7 @@ export function Layout() {
         <div className="flex items-center gap-3 text-sm">
           {!configured ? (
             <span className="rounded-md border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-3 py-1.5 text-[var(--danger)]">
-              Configure o .env
+              Configuração incompleta
             </span>
           ) : loading ? (
             <span className="text-[var(--text-muted)]">…</span>
@@ -48,7 +48,7 @@ export function Layout() {
             <span className="text-[var(--text-muted)]">
               {me.display_name}
               {syncing ? (
-                <span className="ml-2 text-[var(--teal-soft)]">sync…</span>
+                <span className="ml-2 text-[var(--teal-soft)]">sincronizando…</span>
               ) : lcu?.connected ? (
                 <span className="ml-2 text-[var(--teal-soft)]">LoL</span>
               ) : null}
@@ -57,7 +57,7 @@ export function Layout() {
             <span className="text-[var(--text-muted)]">Aguardando LoL…</span>
           ) : (
             <span className="rounded-md border border-[var(--line)] px-3 py-1.5 text-[var(--text-muted)]">
-              App desktop
+              Use o app de PC
             </span>
           )}
         </div>

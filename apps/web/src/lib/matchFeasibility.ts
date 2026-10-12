@@ -2,6 +2,14 @@ import type { ThemeMatchChampion, ThemeMatchPlayer } from './types'
 
 export type LaneRole = 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT'
 
+export const ALL_LANE_ROLES: LaneRole[] = [
+  'TOP',
+  'JUNGLE',
+  'MID',
+  'ADC',
+  'SUPPORT',
+]
+
 const ROLE_ALIASES: Record<string, LaneRole> = {
   TOP: 'TOP',
   JUNGLE: 'JUNGLE',
@@ -58,14 +66,59 @@ export function matchedPlayerRole(
   return null
 }
 
+/** Rotas já pegadas como principal por alguém do party (ignora Fill). */
+export function claimedPrimaryRoles(
+  players: ThemeMatchPlayer[],
+): Set<LaneRole> {
+  const claimed = new Set<LaneRole>()
+  for (const p of players) {
+    if (isFlexibleRole(p.primary_role, p.secondary_role)) continue
+    const primary = normalizeLaneRole(p.primary_role)
+    if (primary) claimed.add(primary)
+  }
+  return claimed
+}
+
+/** Rotas ainda livres no party. */
+export function openLaneRoles(players: ThemeMatchPlayer[]): Set<LaneRole> {
+  const claimed = claimedPrimaryRoles(players)
+  return new Set(ALL_LANE_ROLES.filter((r) => !claimed.has(r)))
+}
+
+/** Campeão cobre pelo menos uma rota ainda livre. */
+export function coversOpenRole(
+  championRoles: string[] | null | undefined,
+  openRoles: Set<LaneRole>,
+): boolean {
+  if (openRoles.size === 0) return true
+  for (const role of championRoles ?? []) {
+    const n = normalizeLaneRole(role)
+    if (n && openRoles.has(n)) return true
+  }
+  return false
+}
+
+/** Score de fit: rota do jogador, ou rotas livres se for Fill. */
+export function playerChampFitScore(
+  player: ThemeMatchPlayer,
+  championRoles: string[] | null | undefined,
+  openRoles: Set<LaneRole>,
+): number {
+  if (isFlexibleRole(player.primary_role, player.secondary_role)) {
+    return coversOpenRole(championRoles, openRoles) ? 2 : 0
+  }
+  return roleFitScore(championRoles, player.primary_role, player.secondary_role)
+}
+
 /** Verifica se dá pra atribuir um campeão distinto a cada jogador do match. */
 export function canAssignUniqueChampions(players: ThemeMatchPlayer[]): boolean {
   if (players.length === 0) return false
+  const open = openLaneRoles(players)
   const lists = players.map((p) => {
     const ranked = [...p.champions].sort(
       (a, b) =>
-        roleFitScore(b.roles, p.primary_role, p.secondary_role) -
-        roleFitScore(a.roles, p.primary_role, p.secondary_role),
+        playerChampFitScore(p, b.roles, open) -
+        playerChampFitScore(p, a.roles, open),
     )
     return ranked.map((c) => c.champion_id)
   })
@@ -73,40 +126,193 @@ export function canAssignUniqueChampions(players: ThemeMatchPlayer[]): boolean {
 }
 
 /**
- * Atribuição gulosa priorizando rota: devolve mapa player_id → champion_id
- * (melhor esforço; null se impossível).
+ * Atribuição só por escassez (ARAM / sem rotas): quem tem menos opções no
+ * tema escolhe primeiro; evita pegar o único campeão de outro.
+ */
+export function suggestUniqueChampionAssignment(
+  players: ThemeMatchPlayer[],
+): Record<string, string> | null {
+  if (!canAssignUniqueChampions(players)) return null
+
+  const order = [...players].sort(
+    (a, b) => a.champions.length - b.champions.length,
+  )
+
+  const used = new Set<string>()
+  const assignment: Record<string, string> = {}
+
+  function soleOptionForLater(champId: string, fromIdx: number): boolean {
+    for (let i = fromIdx; i < order.length; i++) {
+      const p = order[i]
+      if (assignment[p.player_id]) continue
+      if (
+        p.champions.length === 1 &&
+        p.champions[0]?.champion_id === champId
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  function tryAssign(idx: number): boolean {
+    if (idx >= order.length) return true
+    const player = order[idx]
+    const laterStart = idx + 1
+
+    const champs = [...player.champions].sort((a, b) => {
+      const aSole = soleOptionForLater(a.champion_id, laterStart) ? 1 : 0
+      const bSole = soleOptionForLater(b.champion_id, laterStart) ? 1 : 0
+      if (aSole !== bSole) return aSole - bSole
+      return a.champion_name.localeCompare(b.champion_name, 'pt-BR')
+    })
+
+    for (const c of champs) {
+      if (used.has(c.champion_id)) continue
+
+      if (
+        player.champions.length > 1 &&
+        soleOptionForLater(c.champion_id, laterStart) &&
+        champs.some(
+          (other) =>
+            other.champion_id !== c.champion_id &&
+            !used.has(other.champion_id) &&
+            !soleOptionForLater(other.champion_id, laterStart),
+        )
+      ) {
+        continue
+      }
+
+      used.add(c.champion_id)
+      assignment[player.player_id] = c.champion_id
+      if (tryAssign(idx + 1)) return true
+      used.delete(c.champion_id)
+      delete assignment[player.player_id]
+    }
+    return false
+  }
+
+  return tryAssign(0) ? assignment : null
+}
+
+/**
+ * Atribuição SR: escassez primeiro; rota / Fill desempatam entre opções.
+ * Evita “roubar” o único campeão de outro jogador ainda não atribuído.
  */
 export function suggestRoleAwareAssignment(
   players: ThemeMatchPlayer[],
 ): Record<string, string> | null {
   if (!canAssignUniqueChampions(players)) return null
 
+  const open = openLaneRoles(players)
+
   const order = [...players].sort((a, b) => {
+    const byCount = a.champions.length - b.champions.length
+    if (byCount !== 0) return byCount
     const aOn = a.champions.filter(
-      (c) => roleFitScore(c.roles, a.primary_role, a.secondary_role) > 0,
+      (c) => playerChampFitScore(a, c.roles, open) > 0,
     ).length
     const bOn = b.champions.filter(
-      (c) => roleFitScore(c.roles, b.primary_role, b.secondary_role) > 0,
+      (c) => playerChampFitScore(b, c.roles, open) > 0,
     ).length
     return aOn - bOn
   })
 
   const used = new Set<string>()
   const assignment: Record<string, string> = {}
+  /** Rotas “consumidas” por recomendações de Fill neste match. */
+  const filledLanes = new Set<LaneRole>()
+
+  function openFor(player: ThemeMatchPlayer): Set<LaneRole> {
+    if (!isFlexibleRole(player.primary_role, player.secondary_role)) {
+      return open
+    }
+    const next = new Set(open)
+    for (const r of filledLanes) next.delete(r)
+    return next
+  }
+
+  /** Campeão é a única opção de alguém que ainda não recebeu recomendação. */
+  function soleOptionForLater(champId: string, fromIdx: number): boolean {
+    for (let i = fromIdx; i < order.length; i++) {
+      const p = order[i]
+      if (assignment[p.player_id]) continue
+      if (
+        p.champions.length === 1 &&
+        p.champions[0]?.champion_id === champId
+      ) {
+        return true
+      }
+    }
+    return false
+  }
 
   function tryAssign(idx: number): boolean {
     if (idx >= order.length) return true
     const player = order[idx]
-    const champs = [...player.champions].sort(
-      (a, b) =>
-        roleFitScore(b.roles, player.primary_role, player.secondary_role) -
-        roleFitScore(a.roles, player.primary_role, player.secondary_role),
-    )
+    const rolesNow = openFor(player)
+    const laterStart = idx + 1
+
+    const champs = [...player.champions].sort((a, b) => {
+      const aSole = soleOptionForLater(a.champion_id, laterStart) ? 1 : 0
+      const bSole = soleOptionForLater(b.champion_id, laterStart) ? 1 : 0
+      if (aSole !== bSole) return aSole - bSole
+      return (
+        playerChampFitScore(player, b.roles, rolesNow) -
+        playerChampFitScore(player, a.roles, rolesNow)
+      )
+    })
+
     for (const c of champs) {
       if (used.has(c.champion_id)) continue
+
+      // Com outras opções, não pegue o único campeão de quem ainda falta
+      if (
+        player.champions.length > 1 &&
+        soleOptionForLater(c.champion_id, laterStart) &&
+        champs.some(
+          (other) =>
+            other.champion_id !== c.champion_id &&
+            !used.has(other.champion_id) &&
+            !soleOptionForLater(other.champion_id, laterStart),
+        )
+      ) {
+        continue
+      }
+
+      const fit = playerChampFitScore(player, c.roles, rolesNow)
+      // Fill: evita rota já pegada se ainda houver opção em rota livre
+      if (
+        isFlexibleRole(player.primary_role, player.secondary_role) &&
+        fit === 0 &&
+        champs.some(
+          (other) =>
+            !used.has(other.champion_id) &&
+            playerChampFitScore(player, other.roles, rolesNow) > 0 &&
+            !soleOptionForLater(other.champion_id, laterStart),
+        )
+      ) {
+        continue
+      }
+
       used.add(c.champion_id)
       assignment[player.player_id] = c.champion_id
+
+      let claimedLane: LaneRole | null = null
+      if (isFlexibleRole(player.primary_role, player.secondary_role)) {
+        for (const role of c.roles ?? []) {
+          const n = normalizeLaneRole(role)
+          if (n && rolesNow.has(n)) {
+            claimedLane = n
+            filledLanes.add(n)
+            break
+          }
+        }
+      }
+
       if (tryAssign(idx + 1)) return true
+
+      if (claimedLane) filledLanes.delete(claimedLane)
       used.delete(c.champion_id)
       delete assignment[player.player_id]
     }
@@ -131,11 +337,16 @@ export function sortChampionsByRole(
   champions: ThemeMatchChampion[],
   primary: string | null | undefined,
   secondary: string | null | undefined,
+  openRoles?: Set<LaneRole>,
 ): ThemeMatchChampion[] {
+  const open = openRoles ?? new Set(ALL_LANE_ROLES)
+  const flexible = isFlexibleRole(primary, secondary)
   return [...champions].sort((a, b) => {
-    const fit =
-      roleFitScore(b.roles, primary, secondary) -
-      roleFitScore(a.roles, primary, secondary)
+    const fit = flexible
+      ? (coversOpenRole(b.roles, open) ? 2 : 0) -
+        (coversOpenRole(a.roles, open) ? 2 : 0)
+      : roleFitScore(b.roles, primary, secondary) -
+        roleFitScore(a.roles, primary, secondary)
     if (fit !== 0) return fit
     return a.champion_name.localeCompare(b.champion_name, 'pt-BR')
   })
@@ -146,13 +357,39 @@ export function roleLabel(role: string | null | undefined): string | null {
   if (!n && role?.toUpperCase() === 'FILL') return 'Fill'
   if (!n) return null
   const map: Record<LaneRole, string> = {
-    TOP: 'Top',
-    JUNGLE: 'Jungle',
-    MID: 'Mid',
+    TOP: 'TOP',
+    JUNGLE: 'JG',
+    MID: 'MID',
     ADC: 'ADC',
-    SUPPORT: 'Suporte',
+    SUPPORT: 'SUPP',
   }
   return map[n]
+}
+
+/** Rótulos das rotas do campeão (catálogo), para badge na skin. */
+export function championRoleLabels(
+  roles: string[] | null | undefined,
+): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const role of roles ?? []) {
+    const label = roleLabel(role)
+    if (!label || seen.has(label)) continue
+    seen.add(label)
+    out.push(label)
+  }
+  return out
+}
+
+/** Fill / sem preferência de rota. */
+export function isFlexibleRole(
+  primary: string | null | undefined,
+  secondary: string | null | undefined,
+): boolean {
+  const p = primary?.toUpperCase()
+  const s = secondary?.toUpperCase()
+  if (p === 'FILL' || s === 'FILL') return true
+  return !normalizeLaneRole(primary) && !normalizeLaneRole(secondary)
 }
 
 export function queueLabel(kind: string | null | undefined): string {

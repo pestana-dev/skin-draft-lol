@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AramPool } from '../components/AramPool'
 import { usePlayer } from '../contexts/PlayerContext'
-import { formatError } from '../lib/format'
+import { collectionSyncLabel, formatError } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import type { Champion, DraftParticipant, DraftRoom, Player } from '../lib/types'
 
@@ -12,13 +12,8 @@ type LobbyParticipant = DraftParticipant & {
 
 function syncBadge(p: LobbyParticipant) {
   const count = p.player?.skin_count ?? 0
-  const iso = p.player?.last_inventory_sync_at
-  if (!count) return 'Sem coleção salva'
-  if (!iso) return `${count} skins`
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
-  const when =
-    mins < 1 ? 'agora' : mins < 60 ? `há ${mins} min` : `há ${Math.round(mins / 60)} h`
-  return `${count} skins · sync ${when}`
+  if (!count) return 'Coleção ainda não salva'
+  return collectionSyncLabel(p.player?.last_inventory_sync_at, count)
 }
 
 export function LobbyPage() {
@@ -139,14 +134,12 @@ export function LobbyPage() {
           {participants.length} no grupo
         </h1>
         <p className="mt-1 text-[var(--text-muted)]">
-          Montado pelo LoL
-          {room.party_id ? ' · party detectado' : ''}
+          Party do LoL
           {room.settings?.queue_kind === 'aram'
             ? ' · ARAM'
             : room.settings?.queue_kind === 'sr'
               ? ' · Summoner\'s Rift'
               : ''}
-          . Amigos sem app aberto entram se já sincronizaram antes.
         </p>
       </div>
 
@@ -176,7 +169,7 @@ export function LobbyPage() {
                     <span>
                       {p.player?.display_name ?? 'Jogador'}
                       {pid === room.host_id ? (
-                        <span className="ml-2 text-xs text-[var(--gold-soft)]">host</span>
+                        <span className="ml-2 text-xs text-[var(--gold-soft)]">Anfitrião</span>
                       ) : null}
                       {pid === me?.id ? (
                         <span className="ml-2 text-xs text-[var(--teal-soft)]">você</span>
@@ -193,7 +186,7 @@ export function LobbyPage() {
         <section className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)]/80 p-4">
           <h2 className="font-display text-lg">Combinações</h2>
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            Temas em comum com as coleções já salvas de cada Riot ID.
+            Temas em comum no party.
           </p>
           <button
             type="button"
@@ -215,9 +208,8 @@ export function LobbyPage() {
 
       <p className="mt-6 text-sm text-[var(--text-muted)]">
         <Link to="/collection" className="text-[var(--teal-soft)]">
-          Sua coleção
-        </Link>{' '}
-        sincroniza ao abrir o app com o LoL.
+          Ver coleção
+        </Link>
       </p>
     </div>
   )

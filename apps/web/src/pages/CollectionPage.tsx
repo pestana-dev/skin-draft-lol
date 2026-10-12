@@ -204,9 +204,7 @@ export function CollectionPage() {
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl sm:text-4xl">Minha coleção</h1>
-          <p className="mt-1 text-[var(--text-muted)]">
-            Sincronizada pelo League Client — somente leitura.
-          </p>
+          <p className="mt-1 text-[var(--text-muted)]">Sua coleção do LoL.</p>
         </div>
         {isDesktop ? (
           <button
@@ -224,7 +222,7 @@ export function CollectionPage() {
           </button>
         ) : (
           <Link to="/" className="text-sm text-[var(--teal-soft)]">
-            Abra o app desktop
+            Abra o app de PC
           </Link>
         )}
       </div>
@@ -288,7 +286,7 @@ export function CollectionPage() {
               {ownedOnPage > 0
                 ? `${ownedOnPage} suas nesta página · `
                 : null}
-              {total} no catálogo · {ownedCount} na coleção
+              {total} no catálogo · {ownedCount} na sua coleção
             </>
           )}
         </p>
@@ -298,7 +296,7 @@ export function CollectionPage() {
 
       {!me?.id && isDesktop ? (
         <p className="mb-4 text-sm text-[var(--text-muted)]">
-          Abra o LoL para sincronizar sua conta.
+          Abra o LoL para sincronizar.
         </p>
       ) : null}
 
@@ -312,8 +310,8 @@ export function CollectionPage() {
         <div className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)] p-8 text-center">
           <p className="text-[var(--text-muted)]">
             {view === 'owned'
-              ? 'Nenhuma skin sincronizada ainda. Abra o LoL e clique em Sincronizar.'
-              : 'Nenhuma skin encontrada. Rode npm run import:catalog.'}
+              ? 'Nenhuma skin sincronizada ainda.'
+              : 'Nenhuma skin no catálogo.'}
           </p>
         </div>
       ) : (

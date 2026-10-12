@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { usePlayer } from '../contexts/PlayerContext'
-import { formatError, modeLabel } from '../lib/format'
+import { formatError, modeLabel, statusLabel } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import type { DraftRoom } from '../lib/types'
 
@@ -56,14 +56,12 @@ export function HistoryPage() {
 
   return (
     <div className="animate-fade-up">
-      <h1 className="font-display text-3xl sm:text-4xl">Drafts anteriores</h1>
-      <p className="mt-1 text-[var(--text-muted)]">
-        Salas do party em que você entrou com este Riot ID.
-      </p>
+      <h1 className="font-display text-3xl sm:text-4xl">Histórico</h1>
+      <p className="mt-1 text-[var(--text-muted)]">Seus lobbies recentes.</p>
 
       {!isDesktop || !me?.id ? (
         <p className="mt-6 text-sm text-[var(--text-muted)]">
-          Abra o app desktop com o LoL para ver o histórico.
+          Abra o app de PC com o LoL.
         </p>
       ) : loading ? (
         <p className="mt-6 text-[var(--text-muted)]">Carregando…</p>
@@ -88,7 +86,7 @@ export function HistoryPage() {
                   </span>
                 </span>
                 <span className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
-                  {room.status}
+                  {statusLabel(room.status)}
                 </span>
               </Link>
             </li>
