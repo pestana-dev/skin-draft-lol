@@ -1,0 +1,126 @@
+@import 'tailwindcss';
+
+:root {
+  --ink: #0b1220;
+  --ink-soft: #121a2b;
+  --panel: #162033;
+  --panel-elevated: #1c2940;
+  --line: rgba(201, 162, 39, 0.18);
+  --line-strong: rgba(201, 162, 39, 0.35);
+  --gold: #c9a227;
+  --gold-soft: #e6c76a;
+  --teal: #3db8a0;
+  --teal-soft: #7ed9c7;
+  --danger: #e35d6a;
+  --text: #d7deea;
+  --text-muted: #8b97ab;
+  --text-strong: #f4f7fb;
+  --font-display: 'Syne', sans-serif;
+  --font-body: 'Sora', sans-serif;
+  --radius: 12px;
+  --shadow-glow: 0 0 40px rgba(61, 184, 160, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--text);
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(61, 184, 160, 0.14), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 90% 0%, rgba(201, 162, 39, 0.12), transparent 45%),
+    linear-gradient(180deg, #0b1220 0%, #0e1626 45%, #101925 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(61, 184, 160, 0.35);
+  color: var(--text-strong);
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(61, 184, 160, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(61, 184, 160, 0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.55s ease-out both;
+}
+
+.animate-fade-up-delay {
+  animation: fade-up 0.55s ease-out 0.12s both;
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2s ease-in-out infinite;
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.04) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
