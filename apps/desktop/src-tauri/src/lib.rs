@@ -11,6 +11,7 @@ struct LcuStatus {
     message: String,
     summoner: Option<lcu::SummonerInfo>,
     party: Option<lcu::PartySnapshot>,
+    champ_select: Option<lcu::ChampSelectSnapshot>,
 }
 
 #[tauri::command]
@@ -21,6 +22,7 @@ fn lcu_status() -> Result<LcuStatus, String> {
             message: "Abra o League Client (LoL)".into(),
             summoner: None,
             party: None,
+            champ_select: None,
         });
     };
 
@@ -32,18 +34,30 @@ fn lcu_status() -> Result<LcuStatus, String> {
                 message: e,
                 summoner: None,
                 party: None,
+                champ_select: None,
             });
         }
     };
 
     let party = lcu::detect_party(&lock)?.filter(|p| !p.members.is_empty() || !p.party_id.is_empty());
+    let champ_select = lcu::champ_select_snapshot(&lock).unwrap_or(None);
 
     Ok(LcuStatus {
         connected: true,
         message: "LoL conectado".into(),
         summoner,
         party,
+        champ_select,
     })
+}
+
+#[tauri::command]
+fn pick_champion_skin(
+    champion_id: i64,
+    skin_id: i64,
+) -> Result<lcu::ChampSelectSnapshot, String> {
+    let lock = lcu::read_lockfile().ok_or_else(|| "Abra o League Client (LoL)".to_string())?;
+    lcu::pick_champion_skin(&lock, champion_id, skin_id)
 }
 
 #[tauri::command]
@@ -52,7 +66,12 @@ fn sync_me() -> Result<serde_json::Value, String> {
     let lock = lcu::read_lockfile().ok_or_else(|| "Abra o League Client (LoL)".to_string())?;
     let me = lcu::current_summoner(&lock)?;
     let ids = lcu::owned_skin_item_ids(&lock)?;
-    supabase::sync_me(&cfg, &me, &ids)
+    let skins = supabase::sync_me(&cfg, &me, &ids)?;
+    // Maestria no mesmo fluxo das skins — falha não bloqueia o inventário
+    if let Ok(mastery) = lcu::local_champion_mastery(&lock) {
+        let _ = supabase::sync_mastery(&cfg, &me, &mastery);
+    }
+    Ok(skins)
 }
 
 #[tauri::command]
@@ -66,6 +85,8 @@ fn sync_party(sync_inventory: Option<bool>) -> Result<serde_json::Value, String>
     if sync_inventory.unwrap_or(false) {
         let ids = lcu::owned_skin_item_ids(&lock)?;
         let _ = supabase::sync_me(&cfg, &me, &ids)?;
+        let mastery = lcu::local_champion_mastery(&lock).unwrap_or_default();
+        let _ = supabase::sync_mastery(&cfg, &me, &mastery);
     }
 
     supabase::sync_party(&cfg, &me, &party)
@@ -82,7 +103,12 @@ pub fn run() {
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![lcu_status, sync_me, sync_party])
+        .invoke_handler(tauri::generate_handler![
+            lcu_status,
+            sync_me,
+            sync_party,
+            pick_champion_skin
+        ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar Skin Draft desktop");
 }

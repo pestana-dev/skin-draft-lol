@@ -25,9 +25,10 @@ npm run dev:desktop
 
 | Comando | Função |
 | --- | --- |
-| `lcu_status` | LoL conectado? summoner + party |
+| `lcu_status` | LoL conectado? summoner + party + espelho da Champ Select |
 | `sync_me` | Upsert player + replace `player_skins` |
 | `sync_party` | Sync inventário + monta sala pelos membros do party |
+| `pick_champion_skin` | Pick campeão+skin na Champ Select do client (ARAM bench / SR action) |
 
 Config Supabase: lê `.env` / `config.env`, ou valores embutidos no release (`SKIN_DRAFT_SUPABASE_*`).
 

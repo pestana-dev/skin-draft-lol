@@ -13,7 +13,7 @@ import { formatError } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import type { Skin, SkinTheme } from '../lib/types'
 
-const PAGE_SIZE = 48
+const PAGE_SIZE = 64
 
 type ViewMode = 'all' | 'owned'
 
@@ -227,8 +227,8 @@ export function CollectionPage() {
         )}
       </div>
 
-      <div className="sticky top-0 z-20 -mx-4 mb-5 border-b border-[var(--line)] bg-[var(--ink)]/90 px-4 py-3 backdrop-blur-md sm:-mx-6 sm:px-6">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="sticky top-0 z-20 -mx-4 mb-4 border-b border-[var(--line)] bg-[var(--ink)]/90 px-4 py-3 backdrop-blur-md sm:-mx-6 sm:px-6">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex rounded-md border border-[var(--line)] bg-[var(--panel)] p-1">
             <button
               type="button"
@@ -261,7 +261,7 @@ export function CollectionPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar campeão ou skin…"
-            className="min-w-[180px] flex-1 rounded-md border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-sm outline-none focus:border-[var(--teal)]"
+            className="min-w-[160px] flex-1 rounded-md border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-sm outline-none focus:border-[var(--teal)]"
           />
 
           <select
@@ -301,9 +301,9 @@ export function CollectionPage() {
       ) : null}
 
       {showSkeleton ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="skeleton aspect-[3/4] rounded-[var(--radius)]" />
+        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8">
+          {Array.from({ length: 16 }).map((_, i) => (
+            <div key={i} className="skeleton aspect-[3/5] rounded-md" />
           ))}
         </div>
       ) : skins.length === 0 ? (
@@ -316,7 +316,7 @@ export function CollectionPage() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+          <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8">
             {skins.map((skin) => (
               <SkinCard
                 key={skin.id}

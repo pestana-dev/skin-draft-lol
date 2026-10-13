@@ -110,24 +110,44 @@ export function playerChampFitScore(
   return roleFitScore(championRoles, player.primary_role, player.secondary_role)
 }
 
+function playerChampions(player: ThemeMatchPlayer): ThemeMatchChampion[] {
+  return player.champions ?? []
+}
+
 /** Verifica se dá pra atribuir um campeão distinto a cada jogador do match. */
 export function canAssignUniqueChampions(players: ThemeMatchPlayer[]): boolean {
   if (players.length === 0) return false
   const open = openLaneRoles(players)
   const lists = players.map((p) => {
-    const ranked = [...p.champions].sort(
+    const ranked = [...playerChampions(p)].sort(
       (a, b) =>
         playerChampFitScore(p, b.roles, open) -
         playerChampFitScore(p, a.roles, open),
     )
     return ranked.map((c) => c.champion_id)
   })
+  // Sem opções pra alguém → impossível
+  if (lists.some((l) => l.length === 0)) return false
   return dfs(lists, 0, new Set())
 }
 
+function masteryPoints(c: {
+  mastery_points?: number
+  mastery_level?: number
+}): number {
+  return c.mastery_points ?? 0
+}
+
+function masteryLevel(c: {
+  mastery_points?: number
+  mastery_level?: number
+}): number {
+  return c.mastery_level ?? 0
+}
+
 /**
- * Atribuição só por escassez (ARAM / sem rotas): quem tem menos opções no
- * tema escolhe primeiro; evita pegar o único campeão de outro.
+ * Atribuição ARAM: escassez primeiro; entre opções livres, prioriza maestria
+ * (pontos → nível). Evita pegar o único campeão de outro.
  */
 export function suggestUniqueChampionAssignment(
   players: ThemeMatchPlayer[],
@@ -135,7 +155,7 @@ export function suggestUniqueChampionAssignment(
   if (!canAssignUniqueChampions(players)) return null
 
   const order = [...players].sort(
-    (a, b) => a.champions.length - b.champions.length,
+    (a, b) => playerChampions(a).length - playerChampions(b).length,
   )
 
   const used = new Set<string>()
@@ -145,10 +165,8 @@ export function suggestUniqueChampionAssignment(
     for (let i = fromIdx; i < order.length; i++) {
       const p = order[i]
       if (assignment[p.player_id]) continue
-      if (
-        p.champions.length === 1 &&
-        p.champions[0]?.champion_id === champId
-      ) {
+      const champs = playerChampions(p)
+      if (champs.length === 1 && champs[0]?.champion_id === champId) {
         return true
       }
     }
@@ -159,11 +177,17 @@ export function suggestUniqueChampionAssignment(
     if (idx >= order.length) return true
     const player = order[idx]
     const laterStart = idx + 1
+    const playerChamps = playerChampions(player)
 
-    const champs = [...player.champions].sort((a, b) => {
+    const champs = [...playerChamps].sort((a, b) => {
       const aSole = soleOptionForLater(a.champion_id, laterStart) ? 1 : 0
       const bSole = soleOptionForLater(b.champion_id, laterStart) ? 1 : 0
       if (aSole !== bSole) return aSole - bSole
+      // Preferir maior maestria entre opções válidas
+      const byPts = masteryPoints(b) - masteryPoints(a)
+      if (byPts !== 0) return byPts
+      const byLvl = masteryLevel(b) - masteryLevel(a)
+      if (byLvl !== 0) return byLvl
       return a.champion_name.localeCompare(b.champion_name, 'pt-BR')
     })
 
@@ -171,7 +195,7 @@ export function suggestUniqueChampionAssignment(
       if (used.has(c.champion_id)) continue
 
       if (
-        player.champions.length > 1 &&
+        playerChamps.length > 1 &&
         soleOptionForLater(c.champion_id, laterStart) &&
         champs.some(
           (other) =>
@@ -207,12 +231,12 @@ export function suggestRoleAwareAssignment(
   const open = openLaneRoles(players)
 
   const order = [...players].sort((a, b) => {
-    const byCount = a.champions.length - b.champions.length
+    const byCount = playerChampions(a).length - playerChampions(b).length
     if (byCount !== 0) return byCount
-    const aOn = a.champions.filter(
+    const aOn = playerChampions(a).filter(
       (c) => playerChampFitScore(a, c.roles, open) > 0,
     ).length
-    const bOn = b.champions.filter(
+    const bOn = playerChampions(b).filter(
       (c) => playerChampFitScore(b, c.roles, open) > 0,
     ).length
     return aOn - bOn
@@ -237,10 +261,8 @@ export function suggestRoleAwareAssignment(
     for (let i = fromIdx; i < order.length; i++) {
       const p = order[i]
       if (assignment[p.player_id]) continue
-      if (
-        p.champions.length === 1 &&
-        p.champions[0]?.champion_id === champId
-      ) {
+      const champs = playerChampions(p)
+      if (champs.length === 1 && champs[0]?.champion_id === champId) {
         return true
       }
     }
@@ -252,15 +274,19 @@ export function suggestRoleAwareAssignment(
     const player = order[idx]
     const rolesNow = openFor(player)
     const laterStart = idx + 1
+    const playerChamps = playerChampions(player)
 
-    const champs = [...player.champions].sort((a, b) => {
+    const champs = [...playerChamps].sort((a, b) => {
       const aSole = soleOptionForLater(a.champion_id, laterStart) ? 1 : 0
       const bSole = soleOptionForLater(b.champion_id, laterStart) ? 1 : 0
       if (aSole !== bSole) return aSole - bSole
-      return (
+      const byFit =
         playerChampFitScore(player, b.roles, rolesNow) -
         playerChampFitScore(player, a.roles, rolesNow)
-      )
+      if (byFit !== 0) return byFit
+      const byPts = masteryPoints(b) - masteryPoints(a)
+      if (byPts !== 0) return byPts
+      return masteryLevel(b) - masteryLevel(a)
     })
 
     for (const c of champs) {
@@ -268,7 +294,7 @@ export function suggestRoleAwareAssignment(
 
       // Com outras opções, não pegue o único campeão de quem ainda falta
       if (
-        player.champions.length > 1 &&
+        playerChamps.length > 1 &&
         soleOptionForLater(c.champion_id, laterStart) &&
         champs.some(
           (other) =>
@@ -341,14 +367,14 @@ export function sortChampionsByRole(
 ): ThemeMatchChampion[] {
   const open = openRoles ?? new Set(ALL_LANE_ROLES)
   const flexible = isFlexibleRole(primary, secondary)
-  return [...champions].sort((a, b) => {
+  return [...(champions ?? [])].sort((a, b) => {
     const fit = flexible
       ? (coversOpenRole(b.roles, open) ? 2 : 0) -
         (coversOpenRole(a.roles, open) ? 2 : 0)
       : roleFitScore(b.roles, primary, secondary) -
         roleFitScore(a.roles, primary, secondary)
     if (fit !== 0) return fit
-    return a.champion_name.localeCompare(b.champion_name, 'pt-BR')
+    return (a.champion_name ?? '').localeCompare(b.champion_name ?? '', 'pt-BR')
   })
 }
 

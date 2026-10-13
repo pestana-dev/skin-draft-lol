@@ -226,28 +226,58 @@ fn client() -> Result<reqwest::blocking::Client, String> {
 }
 
 pub fn lcu_get(lock: &Lockfile, pathname: &str) -> Result<Option<Value>, String> {
+    lcu_request(lock, "GET", pathname, None)
+}
+
+fn lcu_request(
+    lock: &Lockfile,
+    method: &str,
+    pathname: &str,
+    body: Option<Value>,
+) -> Result<Option<Value>, String> {
     let http = client()?;
     let auth = B64.encode(format!("riot:{}", lock.password));
     let url = format!("https://127.0.0.1:{}{}", lock.port, pathname);
-    let res = http
-        .get(&url)
+    let mut req = match method {
+        "GET" => http.get(&url),
+        "POST" => http.post(&url),
+        "PATCH" => http.patch(&url),
+        "PUT" => http.put(&url),
+        other => return Err(format!("Método LCU não suportado: {other}")),
+    };
+    req = req
         .header("Authorization", format!("Basic {auth}"))
-        .header("Accept", "application/json")
-        .send()
-        .map_err(|e| e.to_string())?;
+        .header("Accept", "application/json");
+    if let Some(payload) = body {
+        req = req.header("Content-Type", "application/json").json(&payload);
+    }
+    let res = req.send().map_err(|e| e.to_string())?;
 
     if res.status().as_u16() == 404 {
         return Ok(None);
     }
     if !res.status().is_success() {
-        return Err(format!("LCU {} → HTTP {}", pathname, res.status()));
+        let status = res.status();
+        let text = res.text().unwrap_or_default();
+        return Err(format!(
+            "LCU {method} {pathname} → HTTP {status}: {}",
+            text.chars().take(240).collect::<String>()
+        ));
     }
-    let body = res.text().map_err(|e| e.to_string())?;
-    if body.trim().is_empty() {
+    let text = res.text().map_err(|e| e.to_string())?;
+    if text.trim().is_empty() {
         return Ok(None);
     }
-    let value: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let value: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     Ok(Some(value))
+}
+
+fn lcu_patch(lock: &Lockfile, pathname: &str, body: Value) -> Result<Option<Value>, String> {
+    lcu_request(lock, "PATCH", pathname, Some(body))
+}
+
+fn lcu_post(lock: &Lockfile, pathname: &str, body: Option<Value>) -> Result<Option<Value>, String> {
+    lcu_request(lock, "POST", pathname, body)
 }
 
 fn dig_party_id(obj: &Value) -> Option<String> {
@@ -498,6 +528,184 @@ pub fn current_summoner(lock: &Lockfile) -> Result<SummonerInfo, String> {
     })
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChampSelectMember {
+    pub cell_id: i64,
+    pub puuid: Option<String>,
+    pub summoner_id: Option<i64>,
+    pub game_name: Option<String>,
+    pub tag_line: Option<String>,
+    pub champion_id: i64,
+    pub champion_pick_intent: i64,
+    pub selected_skin_id: i64,
+    pub is_local: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChampSelectSnapshot {
+    pub phase: Option<String>,
+    pub bench_enabled: bool,
+    pub local_player_cell_id: i64,
+    pub my_team: Vec<ChampSelectMember>,
+}
+
+fn json_i64(v: Option<&Value>) -> i64 {
+    v.and_then(|x| x.as_i64())
+        .or_else(|| v.and_then(|x| x.as_f64()).map(|f| f as i64))
+        .unwrap_or(0)
+}
+
+pub fn champ_select_snapshot(lock: &Lockfile) -> Result<Option<ChampSelectSnapshot>, String> {
+    let Some(session) = lcu_get(lock, "/lol-champ-select/v1/session")? else {
+        return Ok(None);
+    };
+    if session.get("errorCode").is_some() {
+        return Ok(None);
+    }
+
+    let local_cell = json_i64(session.get("localPlayerCellId"));
+    let bench_enabled = session
+        .get("benchEnabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let phase = session
+        .pointer("/timer/phase")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let mut my_team = Vec::new();
+    if let Some(team) = session.get("myTeam").and_then(|t| t.as_array()) {
+        for player in team {
+            let cell_id = json_i64(player.get("cellId"));
+            my_team.push(ChampSelectMember {
+                cell_id,
+                puuid: player
+                    .get("puuid")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                summoner_id: player.get("summonerId").and_then(|v| v.as_i64()),
+                game_name: player
+                    .get("gameName")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                tag_line: player
+                    .get("tagLine")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                champion_id: json_i64(player.get("championId")),
+                champion_pick_intent: json_i64(player.get("championPickIntent")),
+                selected_skin_id: json_i64(player.get("selectedSkinId")),
+                is_local: cell_id == local_cell,
+            });
+        }
+    }
+
+    Ok(Some(ChampSelectSnapshot {
+        phase,
+        bench_enabled,
+        local_player_cell_id: local_cell,
+        my_team,
+    }))
+}
+
+fn find_local_pick_action_id(session: &Value, local_cell: i64) -> Option<i64> {
+    let actions = session.get("actions")?.as_array()?;
+    let mut fallback: Option<i64> = None;
+    for group in actions {
+        let Some(arr) = group.as_array() else { continue };
+        for action in arr {
+            let actor = json_i64(action.get("actorCellId"));
+            let action_type = action.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if actor != local_cell || action_type != "pick" {
+                continue;
+            }
+            let id = json_i64(action.get("id"));
+            if id <= 0 {
+                continue;
+            }
+            let completed = action
+                .get("completed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let in_progress = action
+                .get("isInProgress")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !completed && in_progress {
+                return Some(id);
+            }
+            if !completed {
+                fallback = Some(id);
+            }
+        }
+    }
+    fallback
+}
+
+/// Seleciona campeão + skin na Champ Select do client (ARAM bench ou pick SR).
+pub fn pick_champion_skin(
+    lock: &Lockfile,
+    champion_id: i64,
+    skin_id: i64,
+) -> Result<ChampSelectSnapshot, String> {
+    if champion_id <= 0 {
+        return Err("Campeão inválido".into());
+    }
+    let session = lcu_get(lock, "/lol-champ-select/v1/session")?
+        .ok_or_else(|| "Você não está na seleção de campeões".to_string())?;
+    if session.get("errorCode").is_some() {
+        return Err("Você não está na seleção de campeões".into());
+    }
+
+    let local_cell = json_i64(session.get("localPlayerCellId"));
+    let bench_enabled = session
+        .get("benchEnabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if bench_enabled {
+        // ARAM: troca pelo campeão do bench
+        let _ = lcu_post(
+            lock,
+            &format!("/lol-champ-select/v1/session/bench/swap/{champion_id}"),
+            None,
+        )?;
+    } else if let Some(action_id) = find_local_pick_action_id(&session, local_cell) {
+        // SR / draft: define o pick (sem lock automático)
+        let _ = lcu_patch(
+            lock,
+            &format!("/lol-champ-select/v1/session/actions/{action_id}"),
+            serde_json::json!({ "championId": champion_id }),
+        )?;
+    } else {
+        // Já pode ter campeão — tenta só a skin; se não tiver champ, avisa
+        let local_champ = session
+            .get("myTeam")
+            .and_then(|t| t.as_array())
+            .and_then(|team| {
+                team.iter().find(|p| json_i64(p.get("cellId")) == local_cell)
+            })
+            .map(|p| json_i64(p.get("championId")))
+            .unwrap_or(0);
+        if local_champ <= 0 {
+            return Err("Aguarde sua vez de pickar no client".into());
+        }
+    }
+
+    if skin_id > 0 {
+        let _ = lcu_patch(
+            lock,
+            "/lol-champ-select/v1/session/my-selection",
+            serde_json::json!({ "selectedSkinId": skin_id }),
+        )?;
+    }
+
+    champ_select_snapshot(lock)?
+        .ok_or_else(|| "Select encerrada após o pick".to_string())
+}
+
 pub fn owned_skin_item_ids(lock: &Lockfile) -> Result<Vec<i64>, String> {
     let Some(value) = lcu_get(lock, "/lol-inventory/v2/inventory/CHAMPION_SKIN")? else {
         return Ok(Vec::new());
@@ -522,6 +730,86 @@ pub fn owned_skin_item_ids(lock: &Lockfile) -> Result<Vec<i64>, String> {
     ids.sort_unstable();
     ids.dedup();
     Ok(ids)
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChampionMasteryEntry {
+    pub champion_id: i64,
+    pub champion_level: i32,
+    pub champion_points: i64,
+    pub last_play_time: Option<i64>,
+}
+
+fn mastery_from_value(item: &Value) -> Option<ChampionMasteryEntry> {
+    let champion_id = item
+        .get("championId")
+        .or_else(|| item.get("champion_id"))
+        .and_then(|v| v.as_i64())
+        .filter(|&id| id > 0)?;
+    let champion_level = item
+        .get("championLevel")
+        .or_else(|| item.get("champion_level"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+    let champion_points = item
+        .get("championPoints")
+        .or_else(|| item.get("champion_points"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let last_play_time = item
+        .get("lastPlayTime")
+        .or_else(|| item.get("last_play_time"))
+        .and_then(|v| v.as_i64())
+        .filter(|&t| t > 0);
+    Some(ChampionMasteryEntry {
+        champion_id,
+        champion_level,
+        champion_points,
+        last_play_time,
+    })
+}
+
+/// Maestria da conta logada no client.
+pub fn local_champion_mastery(lock: &Lockfile) -> Result<Vec<ChampionMasteryEntry>, String> {
+    let mut value = lcu_get(lock, "/lol-champion-mastery/v1/local-player/champion-mastery")?;
+    if value.is_none() {
+        // Fallback: collections com summonerId
+        if let Ok(Some(raw)) = lcu_get(lock, "/lol-summoner/v1/current-summoner") {
+            if let Some(sid) = raw.get("summonerId").and_then(|v| v.as_i64()) {
+                value = lcu_get(
+                    lock,
+                    &format!("/lol-collections/v1/inventories/{sid}/champion-mastery"),
+                )?;
+            }
+        }
+    }
+
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    let arr = match value {
+        Value::Array(a) => a,
+        other => other
+            .get("championMasteries")
+            .or_else(|| other.get("masteries"))
+            .and_then(|i| i.as_array())
+            .cloned()
+            .unwrap_or_default(),
+    };
+
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for item in arr {
+        if let Some(entry) = mastery_from_value(&item) {
+            if seen.insert(entry.champion_id) {
+                out.push(entry);
+            }
+        }
+    }
+    out.sort_by(|a, b| b.champion_points.cmp(&a.champion_points));
+    Ok(out)
 }
 
 fn is_in_champ_select(lock: &Lockfile) -> bool {

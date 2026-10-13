@@ -10,9 +10,11 @@ import {
 } from 'react'
 import {
   desktopLcuStatus,
+  desktopPickChampionSkin,
   desktopSyncMe,
   desktopSyncParty,
   isTauri,
+  type ChampSelectSnapshot,
   type LcuStatus,
   type SyncPartyResult,
 } from '../lib/desktop'
@@ -34,11 +36,14 @@ type PlayerContextValue = {
   refresh: () => Promise<void>
   syncInventory: () => Promise<void>
   syncParty: () => Promise<void>
+  /** Pick no League Client; Skin Draft só espelha o resultado. */
+  pickInClient: (championId: number, skinId: number) => Promise<ChampSelectSnapshot>
 }
 
 const PlayerContext = createContext<PlayerContextValue | null>(null)
 
 const STATUS_POLL_MS = 5000
+const STATUS_POLL_CHAMP_SELECT_MS = 1500
 /** Re-sync inventário no máximo a cada 10 min (além do boot / botão manual). */
 const INVENTORY_RESYNC_MS = 10 * 60 * 1000
 
@@ -81,6 +86,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const lastPartyFpRef = useRef<string | null>(null)
   const lastInventoryAtRef = useRef(0)
   const wasConnectedRef = useRef(false)
+  const lcuRef = useRef<LcuStatus | null>(null)
+  lcuRef.current = lcu
 
   const applyPartyResult = useCallback((result: SyncPartyResult) => {
     setRoomId(result.room_id)
@@ -181,6 +188,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [applyPartyResult, isDesktop, me?.puuid])
 
+  const pickInClient = useCallback(
+    async (championId: number, skinId: number) => {
+      if (!isDesktop) {
+        throw new Error('Pick no client só funciona no app desktop')
+      }
+      const snapshot = await desktopPickChampionSkin({ championId, skinId })
+      setLcu((prev) =>
+        prev
+          ? {
+              ...prev,
+              champSelect: snapshot,
+              party: prev.party
+                ? { ...prev.party, inChampSelect: true }
+                : prev.party,
+            }
+          : prev,
+      )
+      return snapshot
+    },
+    [isDesktop],
+  )
+
   useEffect(() => {
     if (!isDesktop) {
       setLoading(false)
@@ -188,16 +217,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
 
     let cancelled = false
+    let timer: number | null = null
 
-    async function tick(forceInventory: boolean) {
-      if (cancelled || busyRef.current) return
+    async function tick(forceInventory: boolean): Promise<boolean> {
+      if (cancelled || busyRef.current) {
+        return Boolean(
+          lcuRef.current?.champSelect || lcuRef.current?.party?.inChampSelect,
+        )
+      }
       busyRef.current = true
+      let selectActive = false
       try {
         const status = await desktopLcuStatus()
-        if (cancelled) return
+        if (cancelled) return false
 
         setLcu(status)
+        lcuRef.current = status
         setLoading(false)
+        selectActive = Boolean(
+          status.champSelect || status.party?.inChampSelect,
+        )
 
         if (!status.connected || !status.summoner) {
           wasConnectedRef.current = false
@@ -206,7 +245,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setPartyMembers([])
           setQueueKind(null)
           lastPartyFpRef.current = null
-          return
+          return false
         }
 
         const justConnected = !wasConnectedRef.current
@@ -230,7 +269,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (needInventory) {
           try {
             const inv = await desktopSyncMe()
-            if (cancelled) return
+            if (cancelled) return selectActive
             lastInventoryAtRef.current = Date.now()
             setMe({
               id: inv.player_id,
@@ -255,7 +294,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setPartyMembers([])
           setQueueKind(null)
           lastPartyFpRef.current = null
-          return
+          return selectActive
         }
 
         setPartyId(status.party!.partyId)
@@ -264,7 +303,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (fp !== lastPartyFpRef.current) {
           try {
             const party = await desktopSyncParty({ syncInventory: false })
-            if (cancelled) return
+            if (cancelled) return selectActive
             lastPartyFpRef.current = fp
             applyPartyResult(party)
           } catch (err) {
@@ -283,14 +322,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       } finally {
         busyRef.current = false
       }
+      return selectActive
     }
 
-    void tick(true)
-    const id = window.setInterval(() => void tick(false), STATUS_POLL_MS)
+    async function loop(forceInventory: boolean) {
+      const selectActive = await tick(forceInventory)
+      if (cancelled) return
+      const ms = selectActive ? STATUS_POLL_CHAMP_SELECT_MS : STATUS_POLL_MS
+      timer = window.setTimeout(() => void loop(false), ms)
+    }
+
+    void loop(true)
 
     return () => {
       cancelled = true
-      window.clearInterval(id)
+      if (timer != null) window.clearTimeout(timer)
     }
   }, [applyPartyResult, isDesktop])
 
@@ -310,6 +356,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       refresh,
       syncInventory,
       syncParty,
+      pickInClient,
     }),
     [
       configured,
@@ -326,6 +373,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       refresh,
       syncInventory,
       syncParty,
+      pickInClient,
     ],
   )
 

@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Layout } from './components/Layout'
 import { PlayerProvider } from './contexts/PlayerContext'
 import { CollectionPage } from './pages/CollectionPage'
@@ -18,7 +19,14 @@ export default function App() {
             <Route path="collection" element={<CollectionPage />} />
             <Route path="history" element={<HistoryPage />} />
             <Route path="party/:partyId" element={<Navigate to="/" replace />} />
-            <Route path="room/:roomId" element={<MatchesPage />} />
+            <Route
+              path="room/:roomId"
+              element={
+                <ErrorBoundary fallbackTitle="Não foi possível abrir esta sala">
+                  <MatchesPage />
+                </ErrorBoundary>
+              }
+            />
             <Route
               path="room/:roomId/matches"
               element={<Navigate to=".." relative="path" replace />}

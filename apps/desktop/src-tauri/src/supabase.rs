@@ -1,5 +1,5 @@
 use crate::config::AppConfig;
-use crate::lcu::{PartyMember, PartySnapshot, SummonerInfo};
+use crate::lcu::{ChampionMasteryEntry, PartyMember, PartySnapshot, SummonerInfo};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -40,6 +40,35 @@ pub fn sync_me(cfg: &AppConfig, me: &SummonerInfo, item_ids: &[i64]) -> Result<V
         json!({
             "p_puuid": me.puuid,
             "p_lcu_item_ids": item_ids,
+            "p_game_name": me.game_name,
+            "p_tag_line": me.tag_line,
+        }),
+    )
+}
+
+pub fn sync_mastery(
+    cfg: &AppConfig,
+    me: &SummonerInfo,
+    entries: &[ChampionMasteryEntry],
+) -> Result<Value, String> {
+    let payload: Vec<Value> = entries
+        .iter()
+        .map(|e| {
+            json!({
+                "championId": e.champion_id,
+                "championLevel": e.champion_level,
+                "championPoints": e.champion_points,
+                "lastPlayTime": e.last_play_time,
+            })
+        })
+        .collect();
+
+    rpc(
+        cfg,
+        "sync_player_mastery",
+        json!({
+            "p_puuid": me.puuid,
+            "p_entries": payload,
             "p_game_name": me.game_name,
             "p_tag_line": me.tag_line,
         }),

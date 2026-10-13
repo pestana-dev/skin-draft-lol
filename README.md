@@ -25,7 +25,7 @@ supabase/       migrations SQL (001 → 007)
 ## Setup (dev)
 
 1. Projeto no [Supabase](https://supabase.com).
-2. No SQL Editor, execute as migrations em ordem (`001` … `010`).
+2. No SQL Editor, execute as migrations em ordem (`001` … `011`).
 3. Configure o `.env`:
 
 ```bash

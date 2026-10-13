@@ -1,5 +1,24 @@
 import type { PartyMemberSnapshot, Player, SummonerInfo } from './types'
 
+export type ChampSelectMember = {
+  cellId: number
+  puuid?: string | null
+  summonerId?: number | null
+  gameName?: string | null
+  tagLine?: string | null
+  championId: number
+  championPickIntent: number
+  selectedSkinId: number
+  isLocal: boolean
+}
+
+export type ChampSelectSnapshot = {
+  phase?: string | null
+  benchEnabled: boolean
+  localPlayerCellId: number
+  myTeam: ChampSelectMember[]
+}
+
 export type LcuStatus = {
   connected: boolean
   message: string
@@ -20,6 +39,8 @@ export type LcuStatus = {
     /** True só na Champ Select do client (não no lobby). */
     inChampSelect?: boolean
   } | null
+  /** Espelho ao vivo da Champ Select do client (null fora dela). */
+  champSelect?: ChampSelectSnapshot | null
 }
 
 export type SyncMeResult = {
@@ -63,6 +84,17 @@ export async function desktopSyncParty(opts?: {
 }): Promise<SyncPartyResult> {
   return invoke<SyncPartyResult>('sync_party', {
     syncInventory: opts?.syncInventory ?? false,
+  })
+}
+
+/** Seleciona campeão + skin no League Client (Champ Select). */
+export async function desktopPickChampionSkin(opts: {
+  championId: number
+  skinId: number
+}): Promise<ChampSelectSnapshot> {
+  return invoke<ChampSelectSnapshot>('pick_champion_skin', {
+    championId: opts.championId,
+    skinId: opts.skinId,
   })
 }
 

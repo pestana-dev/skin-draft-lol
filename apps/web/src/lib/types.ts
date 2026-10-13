@@ -137,6 +137,9 @@ export type ThemeMatchChampion = {
   champion_name: string
   champion_image_url: string | null
   roles?: string[]
+  /** Maestria sincronizada via LCU (0 se ainda não syncou). */
+  mastery_level?: number
+  mastery_points?: number
   skin_count: number
   skins: ThemeMatchSkinOption[]
 }
