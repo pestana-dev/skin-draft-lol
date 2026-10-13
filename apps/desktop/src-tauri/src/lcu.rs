@@ -40,6 +40,109 @@ pub struct PartySnapshot {
     pub aram_champion_ids: Vec<String>,
     pub queue_id: Option<i64>,
     pub queue_kind: String,
+    /// True só na Champ Select do client (não no lobby).
+    pub in_champ_select: bool,
+}
+
+fn parse_lockfile_contents(raw: &str) -> Option<Lockfile> {
+    let parts: Vec<&str> = raw.trim().split(':').collect();
+    if parts.len() < 5 {
+        return None;
+    }
+    let port = parts[2].parse::<u16>().ok()?;
+    Some(Lockfile {
+        port,
+        password: parts[3].to_string(),
+    })
+}
+
+fn parse_lockfile_path(path: &PathBuf) -> Option<Lockfile> {
+    if !path.is_file() {
+        return None;
+    }
+    let raw = fs::read_to_string(path).ok()?;
+    parse_lockfile_contents(&raw)
+}
+
+fn cmdline_arg(cmd: &[std::ffi::OsString], key: &str) -> Option<String> {
+    let flag = if key.starts_with("--") {
+        key.to_string()
+    } else {
+        format!("--{key}")
+    };
+    let with_eq = format!("{flag}=");
+    let mut args = cmd.iter().map(|a| a.to_string_lossy().into_owned());
+    while let Some(arg) = args.next() {
+        if let Some(rest) = arg.strip_prefix(&with_eq) {
+            let cleaned = rest.trim().trim_matches('"').to_string();
+            if !cleaned.is_empty() {
+                return Some(cleaned);
+            }
+        }
+        if arg == flag {
+            if let Some(next) = args.next() {
+                let cleaned = next.trim().trim_matches('"').to_string();
+                if !cleaned.is_empty() {
+                    return Some(cleaned);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn is_league_client_process(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n == "leagueclientux.exe"
+        || n == "leagueclientux"
+        || n == "leagueclient.exe"
+        || n == "leagueclient"
+}
+
+/// Descobre LCU pelo processo do client (funciona em qualquer pasta de instalação).
+fn lockfile_from_process() -> Option<Lockfile> {
+    use sysinfo::{ProcessesToUpdate, System};
+
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+
+    for process in sys.processes().values() {
+        let name = process.name().to_string_lossy();
+        if !is_league_client_process(&name) {
+            continue;
+        }
+        let cmd = process.cmd();
+
+        let port = cmdline_arg(cmd, "app-port").and_then(|p| p.parse::<u16>().ok());
+        let token = cmdline_arg(cmd, "remoting-auth-token");
+        if let (Some(port), Some(password)) = (port, token) {
+            return Some(Lockfile { port, password });
+        }
+
+        // Fallback: pasta de instalação → lockfile
+        if let Some(dir) = cmdline_arg(cmd, "install-directory") {
+            let path = PathBuf::from(dir.trim_end_matches(['\\', '/'])).join("lockfile");
+            if let Some(lock) = parse_lockfile_path(&path) {
+                return Some(lock);
+            }
+        }
+
+        // Fallback: lockfile ao lado do executável
+        if let Some(exe) = process.exe() {
+            if let Some(dir) = exe.parent() {
+                if let Some(lock) = parse_lockfile_path(&dir.join("lockfile")) {
+                    return Some(lock);
+                }
+                // Em alguns installs o UX está em .../LeagueClientUx e o lockfile um nível acima
+                if let Some(parent) = dir.parent() {
+                    if let Some(lock) = parse_lockfile_path(&parent.join("lockfile")) {
+                        return Some(lock);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn lockfile_candidates() -> Vec<PathBuf> {
@@ -49,27 +152,43 @@ fn lockfile_candidates() -> Vec<PathBuf> {
         paths.push(PathBuf::from(custom));
     }
 
-    // Windows
-    paths.push(PathBuf::from(r"C:\Riot Games\League of Legends\lockfile"));
-    paths.push(PathBuf::from(r"D:\Riot Games\League of Legends\lockfile"));
-    if let Ok(local) = env::var("LOCALAPPDATA") {
-        paths.push(
-            PathBuf::from(local)
-                .join("Riot Games")
-                .join("League of Legends")
-                .join("lockfile"),
-        );
-    }
-    if let Ok(profile) = env::var("USERPROFILE") {
-        paths.push(
-            PathBuf::from(profile)
-                .join("Riot Games")
-                .join("League of Legends")
-                .join("lockfile"),
-        );
+    // Windows: varre letras de drive comuns + pastas do usuário
+    #[cfg(windows)]
+    {
+        for letter in b'C'..=b'Z' {
+            let root = format!("{}:\\", letter as char);
+            paths.push(PathBuf::from(format!(
+                "{root}Riot Games\\League of Legends\\lockfile"
+            )));
+            paths.push(PathBuf::from(format!(
+                "{root}Games\\Riot Games\\League of Legends\\lockfile"
+            )));
+            paths.push(PathBuf::from(format!(
+                "{root}Program Files\\Riot Games\\League of Legends\\lockfile"
+            )));
+            paths.push(PathBuf::from(format!(
+                "{root}Program Files (x86)\\Riot Games\\League of Legends\\lockfile"
+            )));
+        }
+        if let Ok(local) = env::var("LOCALAPPDATA") {
+            paths.push(
+                PathBuf::from(local)
+                    .join("Riot Games")
+                    .join("League of Legends")
+                    .join("lockfile"),
+            );
+        }
+        if let Ok(profile) = env::var("USERPROFILE") {
+            paths.push(
+                PathBuf::from(profile)
+                    .join("Riot Games")
+                    .join("League of Legends")
+                    .join("lockfile"),
+            );
+        }
     }
 
-    // macOS (League / Riot Client)
+    // macOS
     if let Ok(home) = env::var("HOME") {
         let home = PathBuf::from(home);
         paths.push(
@@ -85,24 +204,15 @@ fn lockfile_candidates() -> Vec<PathBuf> {
 }
 
 pub fn read_lockfile() -> Option<Lockfile> {
+    // 1) Processo do client (independente do path de instalação)
+    if let Some(lock) = lockfile_from_process() {
+        return Some(lock);
+    }
+    // 2) Paths conhecidos / varredura de drives
     for path in lockfile_candidates() {
-        if !path.is_file() {
-            continue;
+        if let Some(lock) = parse_lockfile_path(&path) {
+            return Some(lock);
         }
-        let Ok(raw) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let parts: Vec<&str> = raw.trim().split(':').collect();
-        if parts.len() < 5 {
-            continue;
-        }
-        let Ok(port) = parts[2].parse::<u16>() else {
-            continue;
-        };
-        return Some(Lockfile {
-            port,
-            password: parts[3].to_string(),
-        });
     }
     None
 }
@@ -414,7 +524,26 @@ pub fn owned_skin_item_ids(lock: &Lockfile) -> Result<Vec<i64>, String> {
     Ok(ids)
 }
 
+fn is_in_champ_select(lock: &Lockfile) -> bool {
+    if let Ok(Some(phase)) = lcu_get(lock, "/lol-gameflow/v1/gameflow-phase") {
+        if phase.as_str() == Some("ChampSelect") {
+            return true;
+        }
+    }
+    matches!(
+        lcu_get(lock, "/lol-champ-select/v1/session"),
+        Ok(Some(session))
+            if session
+                .get("myTeam")
+                .and_then(|t| t.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+    )
+}
+
 pub fn detect_party(lock: &Lockfile) -> Result<Option<PartySnapshot>, String> {
+    let in_champ_select = is_in_champ_select(lock);
+
     for path in [
         "/lol-lobby/v2/lobby",
         "/lol-lobby/v2/party",
@@ -449,6 +578,7 @@ pub fn detect_party(lock: &Lockfile) -> Result<Option<PartySnapshot>, String> {
                     aram_champion_ids: aram,
                     queue_id,
                     queue_kind,
+                    in_champ_select,
                 }));
             }
         }
@@ -468,6 +598,7 @@ pub fn detect_party(lock: &Lockfile) -> Result<Option<PartySnapshot>, String> {
                 aram_champion_ids: aram,
                 queue_id,
                 queue_kind,
+                in_champ_select: true,
             }));
         }
     }

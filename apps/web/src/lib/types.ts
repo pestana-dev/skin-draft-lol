@@ -49,6 +49,21 @@ export type Player = {
 /** @deprecated use Player */
 export type Profile = Player
 
+export type ThemePick = {
+  player_id: string
+  skin_id: string
+  skin_name: string
+  champion_id: string
+  champion_name: string
+  champion_image_url?: string | null
+  splash_url?: string | null
+  tile_url?: string | null
+  theme_id: string
+  theme_slug?: string
+  theme_name: string
+  picked_at?: string
+}
+
 export type DraftRoom = {
   id: string
   code: string
@@ -63,6 +78,7 @@ export type DraftRoom = {
     queue_kind?: QueueKind | string
     queue_id?: number | null
     unique_champions?: boolean
+    theme_picks?: Record<string, ThemePick>
   }
   created_at: string
 }

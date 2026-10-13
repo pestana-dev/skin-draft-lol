@@ -4,7 +4,6 @@ import { PlayerProvider } from './contexts/PlayerContext'
 import { CollectionPage } from './pages/CollectionPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { HomePage } from './pages/HomePage'
-import { LobbyPage } from './pages/LobbyPage'
 import { MatchesPage } from './pages/MatchesPage'
 import { ResultPage } from './pages/ResultPage'
 
@@ -19,8 +18,11 @@ export default function App() {
             <Route path="collection" element={<CollectionPage />} />
             <Route path="history" element={<HistoryPage />} />
             <Route path="party/:partyId" element={<Navigate to="/" replace />} />
-            <Route path="room/:roomId" element={<LobbyPage />} />
-            <Route path="room/:roomId/matches" element={<MatchesPage />} />
+            <Route path="room/:roomId" element={<MatchesPage />} />
+            <Route
+              path="room/:roomId/matches"
+              element={<Navigate to=".." relative="path" replace />}
+            />
             <Route path="room/:roomId/result" element={<ResultPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

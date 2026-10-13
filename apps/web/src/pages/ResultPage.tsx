@@ -163,7 +163,7 @@ export function ResultPage() {
           {error ?? 'Ainda não há um sorteio nesta sala.'}
         </p>
         <Link to={`/room/${roomId}`} className="mt-4 inline-block text-[var(--teal-soft)]">
-          Voltar ao lobby
+          Voltar às combinações
         </Link>
       </div>
     )
@@ -203,7 +203,7 @@ export function ResultPage() {
             onClick={() => navigate(`/room/${roomId}`)}
             className="rounded-md border border-[var(--line)] px-4 py-2 text-sm text-[var(--text-muted)]"
           >
-            Lobby
+            Combinações
           </button>
         </div>
       </div>

@@ -76,7 +76,7 @@ export function HomePage() {
                 to={`/room/${roomId}`}
                 className="rounded-md bg-[var(--gold)] px-4 py-2.5 text-sm font-semibold text-[var(--ink)] transition hover:bg-[var(--gold-soft)]"
               >
-                Abrir lobby
+                Ver combinações
               </Link>
             ) : null}
           </div>
@@ -161,11 +161,11 @@ export function HomePage() {
                     onClick={() => void syncParty().catch(() => undefined)}
                     className="rounded-md border border-[var(--line-strong)] px-3 py-2 text-sm disabled:opacity-50"
                   >
-                    Atualizar lobby
+                    Atualizar party
                   </button>
                   {roomId ? (
                     <Link
-                      to={`/room/${roomId}/matches`}
+                      to={`/room/${roomId}`}
                       className="rounded-md bg-[var(--gold)] px-3 py-2 text-sm font-semibold text-[var(--ink)]"
                     >
                       Ver combinações

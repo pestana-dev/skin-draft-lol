@@ -17,6 +17,8 @@ export type LcuStatus = {
     aramChampionIds: string[]
     queueId?: number | null
     queueKind?: string
+    /** True só na Champ Select do client (não no lobby). */
+    inChampSelect?: boolean
   } | null
 }
 

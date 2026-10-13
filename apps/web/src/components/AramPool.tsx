@@ -3,7 +3,6 @@ import type { Champion } from '../lib/types'
 type Props = {
   champions: Champion[]
   syncedAt?: string | null
-  roomCode?: string
   isHost: boolean
   busy?: boolean
   onClear?: () => void
@@ -25,34 +24,43 @@ export function AramPool({
     : null
 
   return (
-    <section className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)]/80 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="font-display text-lg">Campeões do ARAM</h2>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">
-            Lista da select ARAM do party.
-          </p>
+    <section className="animate-fade-up-delay border-y border-[var(--line)] bg-[var(--panel)]/40 py-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 className="font-display text-base text-[var(--text-strong)]">
+            Pool ARAM
+          </h2>
+          <span className="text-xs text-[var(--text-muted)]">
+            {champions.length
+              ? `${champions.length} campeões · só estes entram nas combinações`
+              : 'Aguardando a select do party'}
+          </span>
         </div>
-        <span
-          className={[
-            'rounded-md px-2.5 py-1 text-xs font-semibold uppercase tracking-wide',
-            champions.length
-              ? 'bg-[var(--teal)]/20 text-[var(--teal-soft)]'
-              : 'bg-[var(--ink-soft)] text-[var(--text-muted)]',
-          ].join(' ')}
-        >
-          {champions.length
-            ? `${champions.length} campeões`
-            : 'Aguardando sincronização'}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          {lastSync ? (
+            <span className="text-[10px] text-[var(--text-muted)]">
+              sync {lastSync}
+            </span>
+          ) : null}
+          {isHost && champions.length > 0 ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onClear}
+              className="text-xs text-[var(--danger)]/80 transition hover:text-[var(--danger)] disabled:opacity-50"
+            >
+              Limpar
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {champions.length > 0 ? (
-        <ul className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+        <ul className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
           {champions.map((c) => (
             <li
               key={c.id}
-              className="overflow-hidden rounded-md border border-[var(--line)] bg-[var(--ink-soft)]"
+              className="w-14 shrink-0 overflow-hidden rounded-md border border-[var(--line)] bg-[var(--ink-soft)] transition hover:border-[var(--teal)]/40"
               title={c.name}
             >
               {c.image_url ? (
@@ -63,39 +71,21 @@ export function AramPool({
                   loading="lazy"
                 />
               ) : (
-                <div className="flex aspect-square items-center justify-center text-xs text-[var(--text-muted)]">
+                <div className="flex aspect-square items-center justify-center text-[10px] text-[var(--text-muted)]">
                   {c.name.slice(0, 2)}
                 </div>
               )}
-              <p className="truncate px-1.5 py-1 text-center text-[10px] text-[var(--text-muted)]">
+              <p className="truncate px-0.5 py-0.5 text-center text-[9px] text-[var(--text-muted)]">
                 {c.name}
               </p>
             </li>
           ))}
         </ul>
       ) : (
-        <div className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[var(--ink-soft)]/50 p-4 text-sm text-[var(--text-muted)]">
-          Entre na select ARAM para atualizar a lista.
-        </div>
+        <p className="text-sm text-[var(--text-muted)]">
+          Entre na select ARAM no cliente para atualizar a lista.
+        </p>
       )}
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {isHost && champions.length > 0 ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onClear}
-            className="rounded-md border border-[var(--danger)]/40 px-3 py-1.5 text-sm text-[var(--danger)] disabled:opacity-50"
-          >
-            Limpar lista
-          </button>
-        ) : null}
-        {lastSync ? (
-          <span className="text-xs text-[var(--text-muted)]">
-            Última sincronização: {lastSync}
-          </span>
-        ) : null}
-      </div>
     </section>
   )
 }

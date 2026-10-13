@@ -8,9 +8,9 @@ App de PC: embute `@skin-draft/web` e fala com o LCU (summoner, inventário, par
 2. **Windows:** build tools do Visual Studio (C++) + WebView2  
    **macOS:** Xcode CLT (`xcode-select --install`)  
 3. `.env` na raiz com `SUPABASE_URL` + chave (secret ou publishable)  
-4. Lockfile do LoL: Windows em `Riot Games\…\lockfile`; Mac em  
-   `~/Library/Application Support/Riot Games/League of Legends/lockfile`  
-   (ou `LEAGUE_LOCKFILE` apontando para o arquivo)
+4. Detecção do LoL: pelo processo `LeagueClientUx` (`--app-port` /
+   `--remoting-auth-token`), depois `lockfile` na pasta de instalação.
+   Override opcional: `LEAGUE_LOCKFILE`
 
 ## Comandos
 

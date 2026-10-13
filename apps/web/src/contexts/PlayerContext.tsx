@@ -57,6 +57,7 @@ function partyFingerprint(status: LcuStatus): string | null {
     party.partyId,
     party.queueId ?? '',
     party.queueKind ?? '',
+    party.inChampSelect ? '1' : '0',
     members,
     aram,
   ].join('::')
