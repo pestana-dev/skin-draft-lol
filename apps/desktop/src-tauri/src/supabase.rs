@@ -94,13 +94,20 @@ pub fn sync_party(
         })
         .collect();
 
+    // SR nunca manda pool ARAM (evita lixo de fila anterior no sync).
+    let champion_ids: Vec<String> = if party.queue_kind == "sr" {
+        Vec::new()
+    } else {
+        party.aram_champion_ids.clone()
+    };
+
     rpc(
         cfg,
         "sync_lcu_party_session",
         json!({
             "p_party_id": party.party_id,
             "p_members": members,
-            "p_champion_ids": party.aram_champion_ids,
+            "p_champion_ids": champion_ids,
             "p_host_puuid": me.puuid,
             "p_queue_id": party.queue_id,
             "p_queue_kind": party.queue_kind,

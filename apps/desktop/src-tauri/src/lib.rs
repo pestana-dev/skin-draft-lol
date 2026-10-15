@@ -26,8 +26,8 @@ fn lcu_status() -> Result<LcuStatus, String> {
         });
     };
 
-    let summoner = match lcu::current_summoner(&lock) {
-        Ok(s) => Some(s),
+    let (summoner, party, champ_select) = match lcu::gather_status(&lock) {
+        Ok(bundle) => bundle,
         Err(e) => {
             return Ok(LcuStatus {
                 connected: false,
@@ -39,13 +39,12 @@ fn lcu_status() -> Result<LcuStatus, String> {
         }
     };
 
-    let party = lcu::detect_party(&lock)?.filter(|p| !p.members.is_empty() || !p.party_id.is_empty());
-    let champ_select = lcu::champ_select_snapshot(&lock).unwrap_or(None);
+    let party = party.filter(|p| !p.members.is_empty() || !p.party_id.is_empty());
 
     Ok(LcuStatus {
         connected: true,
         message: "LoL conectado".into(),
-        summoner,
+        summoner: Some(summoner),
         party,
         champ_select,
     })
@@ -66,10 +65,27 @@ fn sync_me() -> Result<serde_json::Value, String> {
     let lock = lcu::read_lockfile().ok_or_else(|| "Abra o League Client (LoL)".to_string())?;
     let me = lcu::current_summoner(&lock)?;
     let ids = lcu::owned_skin_item_ids(&lock)?;
-    let skins = supabase::sync_me(&cfg, &me, &ids)?;
+    let mut skins = supabase::sync_me(&cfg, &me, &ids)?;
     // Maestria no mesmo fluxo das skins — falha não bloqueia o inventário
-    if let Ok(mastery) = lcu::local_champion_mastery(&lock) {
-        let _ = supabase::sync_mastery(&cfg, &me, &mastery);
+    match lcu::local_champion_mastery(&lock) {
+        Ok(mastery) => {
+            if let Err(e) = supabase::sync_mastery(&cfg, &me, &mastery) {
+                if let Some(obj) = skins.as_object_mut() {
+                    obj.insert(
+                        "mastery_warning".into(),
+                        serde_json::json!(format!("Maestria não sincronizou: {e}")),
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            if let Some(obj) = skins.as_object_mut() {
+                obj.insert(
+                    "mastery_warning".into(),
+                    serde_json::json!(format!("Maestria não sincronizou: {e}")),
+                );
+            }
+        }
     }
     Ok(skins)
 }

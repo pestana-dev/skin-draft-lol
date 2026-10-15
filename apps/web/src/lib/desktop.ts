@@ -49,6 +49,8 @@ export type SyncMeResult = {
   display_name: string
   skin_count: number
   last_inventory_sync_at: string | null
+  /** Aviso não-bloqueante se maestria falhou no mesmo sync. */
+  mastery_warning?: string | null
 }
 
 export type SyncPartyResult = {

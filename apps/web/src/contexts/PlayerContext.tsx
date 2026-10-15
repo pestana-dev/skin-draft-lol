@@ -33,6 +33,8 @@ type PlayerContextValue = {
   partyId: string | null
   partyMembers: SyncPartyResult['members']
   queueKind: string | null
+  /** Epoch ms do último sync de inventário bem-sucedido (p/ recarregar matches). */
+  lastInventorySyncAt: number | null
   refresh: () => Promise<void>
   syncInventory: () => Promise<void>
   syncParty: () => Promise<void>
@@ -43,7 +45,8 @@ type PlayerContextValue = {
 const PlayerContext = createContext<PlayerContextValue | null>(null)
 
 const STATUS_POLL_MS = 5000
-const STATUS_POLL_CHAMP_SELECT_MS = 1500
+/** Espelho da select: 2s é suficiente e evita spam de invoke/LCU. */
+const STATUS_POLL_CHAMP_SELECT_MS = 2000
 /** Re-sync inventário no máximo a cada 10 min (além do boot / botão manual). */
 const INVENTORY_RESYNC_MS = 10 * 60 * 1000
 
@@ -57,7 +60,11 @@ function partyFingerprint(status: LcuStatus): string | null {
     )
     .sort()
     .join('|')
-  const aram = [...(party.aramChampionIds ?? [])].sort().join(',')
+  // Pool ARAM só no ARAM — no SR os picks mudam a cada hover e disparavam sync_party
+  const aram =
+    party.queueKind === 'aram'
+      ? [...(party.aramChampionIds ?? [])].sort().join(',')
+      : ''
   return [
     party.partyId,
     party.queueId ?? '',
@@ -65,6 +72,30 @@ function partyFingerprint(status: LcuStatus): string | null {
     party.inChampSelect ? '1' : '0',
     members,
     aram,
+  ].join('::')
+}
+
+function champSelectFingerprint(status: LcuStatus): string {
+  const cs = status.champSelect
+  if (!cs) return ''
+  const team = (cs.myTeam ?? [])
+    .map(
+      (m) =>
+        `${m.cellId}:${m.championId}:${m.championPickIntent}:${m.selectedSkinId}`,
+    )
+    .join('|')
+  return `${cs.phase ?? ''}:${cs.benchEnabled ? 1 : 0}:${team}`
+}
+
+function lcuUiFingerprint(status: LcuStatus): string {
+  return [
+    status.connected ? '1' : '0',
+    status.message,
+    status.summoner?.puuid ?? '',
+    status.party?.partyId ?? '',
+    status.party?.queueKind ?? '',
+    status.party?.inChampSelect ? '1' : '0',
+    champSelectFingerprint(status),
   ].join('::')
 }
 
@@ -82,10 +113,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [partyMembers, setPartyMembers] = useState<SyncPartyResult['members']>([])
   const [queueKind, setQueueKind] = useState<string | null>(null)
 
-  const busyRef = useRef(false)
+  /** Só bloqueia sync_party/inventory concorrentes — status leve continua. */
+  const syncBusyRef = useRef(false)
   const lastPartyFpRef = useRef<string | null>(null)
   const lastInventoryAtRef = useRef(0)
+  const [lastInventorySyncAt, setLastInventorySyncAt] = useState<number | null>(
+    null,
+  )
   const wasConnectedRef = useRef(false)
+  const lastUiFpRef = useRef<string | null>(null)
   const lcuRef = useRef<LcuStatus | null>(null)
   lcuRef.current = lcu
 
@@ -141,7 +177,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setError(null)
     try {
       const result = await desktopSyncMe()
-      lastInventoryAtRef.current = Date.now()
+      const at = Date.now()
+      lastInventoryAtRef.current = at
+      setLastInventorySyncAt(at)
       setMe({
         id: result.player_id,
         puuid: result.puuid,
@@ -151,6 +189,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         last_inventory_sync_at: result.last_inventory_sync_at,
         skin_count: result.skin_count,
       })
+      if (result.mastery_warning) {
+        setError(String(result.mastery_warning))
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       throw err
@@ -220,19 +261,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let timer: number | null = null
 
     async function tick(forceInventory: boolean): Promise<boolean> {
-      if (cancelled || busyRef.current) {
+      if (cancelled) {
         return Boolean(
           lcuRef.current?.champSelect || lcuRef.current?.party?.inChampSelect,
         )
       }
-      busyRef.current = true
       let selectActive = false
       try {
+        // Status leve sempre — não espera sync pesado
         const status = await desktopLcuStatus()
         if (cancelled) return false
 
-        setLcu(status)
-        lcuRef.current = status
+        const uiFp = lcuUiFingerprint(status)
+        if (uiFp !== lastUiFpRef.current) {
+          lastUiFpRef.current = uiFp
+          setLcu(status)
+          lcuRef.current = status
+        } else {
+          lcuRef.current = status
+        }
         setLoading(false)
         selectActive = Boolean(
           status.champSelect || status.party?.inChampSelect,
@@ -245,32 +292,50 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setPartyMembers([])
           setQueueKind(null)
           lastPartyFpRef.current = null
+          lastUiFpRef.current = null
           return false
         }
 
         const justConnected = !wasConnectedRef.current
         wasConnectedRef.current = true
 
-        setMe((prev) => ({
-          id: prev?.id ?? '',
-          puuid: status.summoner!.puuid,
-          game_name: status.summoner!.gameName,
-          tag_line: status.summoner!.tagLine,
-          display_name: status.summoner!.displayName,
-          last_inventory_sync_at: prev?.last_inventory_sync_at ?? null,
-          skin_count: prev?.skin_count,
-        }))
+        setMe((prev) => {
+          if (
+            prev &&
+            prev.puuid === status.summoner!.puuid &&
+            prev.game_name === status.summoner!.gameName &&
+            prev.tag_line === status.summoner!.tagLine &&
+            prev.display_name === status.summoner!.displayName
+          ) {
+            return prev
+          }
+          return {
+            id: prev?.id ?? '',
+            puuid: status.summoner!.puuid,
+            game_name: status.summoner!.gameName,
+            tag_line: status.summoner!.tagLine,
+            display_name: status.summoner!.displayName,
+            last_inventory_sync_at: prev?.last_inventory_sync_at ?? null,
+            skin_count: prev?.skin_count,
+          }
+        })
 
         const needInventory =
           forceInventory ||
           justConnected ||
           Date.now() - lastInventoryAtRef.current > INVENTORY_RESYNC_MS
 
-        if (needInventory) {
+        let softWarning: string | null = null
+        let hardError: string | null = null
+
+        if (needInventory && !syncBusyRef.current) {
+          syncBusyRef.current = true
           try {
             const inv = await desktopSyncMe()
             if (cancelled) return selectActive
-            lastInventoryAtRef.current = Date.now()
+            const at = Date.now()
+            lastInventoryAtRef.current = at
+            setLastInventorySyncAt(at)
             setMe({
               id: inv.player_id,
               puuid: inv.puuid,
@@ -280,10 +345,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               last_inventory_sync_at: inv.last_inventory_sync_at,
               skin_count: inv.skin_count,
             })
-          } catch (err) {
-            if (!cancelled) {
-              setError(err instanceof Error ? err.message : String(err))
+            if (inv.mastery_warning) {
+              softWarning = String(inv.mastery_warning)
             }
+          } catch (err) {
+            hardError = err instanceof Error ? err.message : String(err)
+          } finally {
+            syncBusyRef.current = false
           }
         }
 
@@ -294,33 +362,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setPartyMembers([])
           setQueueKind(null)
           lastPartyFpRef.current = null
+          if (!cancelled) setError(hardError ?? softWarning)
           return selectActive
         }
 
         setPartyId(status.party!.partyId)
         setQueueKind(status.party!.queueKind ?? null)
 
-        if (fp !== lastPartyFpRef.current) {
+        if (fp !== lastPartyFpRef.current && !syncBusyRef.current) {
+          syncBusyRef.current = true
           try {
             const party = await desktopSyncParty({ syncInventory: false })
             if (cancelled) return selectActive
             lastPartyFpRef.current = fp
             applyPartyResult(party)
           } catch (err) {
-            if (!cancelled) {
-              setError(err instanceof Error ? err.message : String(err))
-            }
+            hardError = err instanceof Error ? err.message : String(err)
+          } finally {
+            syncBusyRef.current = false
           }
         }
 
-        setError(null)
+        if (!cancelled) setError(hardError ?? softWarning)
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err))
           setLoading(false)
         }
-      } finally {
-        busyRef.current = false
       }
       return selectActive
     }
@@ -353,6 +421,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       partyId,
       partyMembers,
       queueKind,
+      lastInventorySyncAt,
       refresh,
       syncInventory,
       syncParty,
@@ -370,6 +439,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       partyId,
       partyMembers,
       queueKind,
+      lastInventorySyncAt,
       refresh,
       syncInventory,
       syncParty,

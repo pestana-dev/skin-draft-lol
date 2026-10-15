@@ -114,21 +114,8 @@ function playerChampions(player: ThemeMatchPlayer): ThemeMatchChampion[] {
   return player.champions ?? []
 }
 
-/** Verifica se dá pra atribuir um campeão distinto a cada jogador do match. */
-export function canAssignUniqueChampions(players: ThemeMatchPlayer[]): boolean {
-  if (players.length === 0) return false
-  const open = openLaneRoles(players)
-  const lists = players.map((p) => {
-    const ranked = [...playerChampions(p)].sort(
-      (a, b) =>
-        playerChampFitScore(p, b.roles, open) -
-        playerChampFitScore(p, a.roles, open),
-    )
-    return ranked.map((c) => c.champion_id)
-  })
-  // Sem opções pra alguém → impossível
-  if (lists.some((l) => l.length === 0)) return false
-  return dfs(lists, 0, new Set())
+function championIdsOf(player: ThemeMatchPlayer): string[] {
+  return playerChampions(player).map((c) => c.champion_id)
 }
 
 function masteryPoints(c: {
@@ -146,77 +133,294 @@ function masteryLevel(c: {
 }
 
 /**
- * Atribuição ARAM: escassez primeiro; entre opções livres, prioriza maestria
- * (pontos → nível). Evita pegar o único campeão de outro.
+ * Score de ranking ARAM (barato, sem DFS):
+ * - +10 por pick do jogador que existe no tema dele
+ * - +1 por campeão da select que aparece no tema (qualquer um)
  */
-export function suggestUniqueChampionAssignment(
+export function scoreAramPickOverlap(
   players: ThemeMatchPlayer[],
-): Record<string, string> | null {
-  if (!canAssignUniqueChampions(players)) return null
+  picksByPlayer: Record<string, string> | null | undefined,
+): number {
+  if (!picksByPlayer || Object.keys(picksByPlayer).length === 0) return 0
 
-  const order = [...players].sort(
-    (a, b) => playerChampions(a).length - playerChampions(b).length,
-  )
-
-  const used = new Set<string>()
-  const assignment: Record<string, string> = {}
-
-  function soleOptionForLater(champId: string, fromIdx: number): boolean {
-    for (let i = fromIdx; i < order.length; i++) {
-      const p = order[i]
-      if (assignment[p.player_id]) continue
-      const champs = playerChampions(p)
-      if (champs.length === 1 && champs[0]?.champion_id === champId) {
-        return true
-      }
+  let score = 0
+  const themeChamps = new Set<string>()
+  for (const p of players) {
+    for (const c of playerChampions(p)) themeChamps.add(c.champion_id)
+    const pick = picksByPlayer[p.player_id]
+    if (pick && playerChampions(p).some((c) => c.champion_id === pick)) {
+      score += 10
     }
-    return false
+  }
+  const seen = new Set<string>()
+  for (const pick of Object.values(picksByPlayer)) {
+    if (seen.has(pick)) continue
+    seen.add(pick)
+    if (themeChamps.has(pick)) score += 1
+  }
+  return score
+}
+
+/**
+ * Reserva picks da select que cabem no tema. Se um lock deixar alguém
+ * sem opções, descarta esse lock (soft) em vez de falhar o tema inteiro.
+ */
+function reserveAramPicks(
+  players: ThemeMatchPlayer[],
+  lockedPicks: Record<string, string> | null | undefined,
+): {
+  assignment: Record<string, string>
+  used: Set<string>
+  remaining: ThemeMatchPlayer[]
+} {
+  const assignment: Record<string, string> = {}
+  const used = new Set<string>()
+  if (!lockedPicks || Object.keys(lockedPicks).length === 0) {
+    return { assignment, used, remaining: players }
   }
 
-  function tryAssign(idx: number): boolean {
-    if (idx >= order.length) return true
-    const player = order[idx]
-    const laterStart = idx + 1
-    const playerChamps = playerChampions(player)
-
-    const champs = [...playerChamps].sort((a, b) => {
-      const aSole = soleOptionForLater(a.champion_id, laterStart) ? 1 : 0
-      const bSole = soleOptionForLater(b.champion_id, laterStart) ? 1 : 0
-      if (aSole !== bSole) return aSole - bSole
-      // Preferir maior maestria entre opções válidas
-      const byPts = masteryPoints(b) - masteryPoints(a)
-      if (byPts !== 0) return byPts
-      const byLvl = masteryLevel(b) - masteryLevel(a)
-      if (byLvl !== 0) return byLvl
-      return a.champion_name.localeCompare(b.champion_name, 'pt-BR')
+  const candidates = players
+    .filter((p) => {
+      const pick = lockedPicks[p.player_id]
+      return Boolean(
+        pick && playerChampions(p).some((c) => c.champion_id === pick),
+      )
     })
+    .sort((a, b) => championIdsOf(a).length - championIdsOf(b).length)
 
-    for (const c of champs) {
-      if (used.has(c.champion_id)) continue
+  for (const player of candidates) {
+    const pick = lockedPicks[player.player_id]!
+    if (used.has(pick)) continue
+    used.add(pick)
+    assignment[player.player_id] = pick
 
-      if (
-        playerChamps.length > 1 &&
-        soleOptionForLater(c.champion_id, laterStart) &&
-        champs.some(
-          (other) =>
-            other.champion_id !== c.champion_id &&
-            !used.has(other.champion_id) &&
-            !soleOptionForLater(other.champion_id, laterStart),
-        )
-      ) {
-        continue
-      }
-
-      used.add(c.champion_id)
-      assignment[player.player_id] = c.champion_id
-      if (tryAssign(idx + 1)) return true
-      used.delete(c.champion_id)
+    const breaksSomeone = players.some((other) => {
+      if (assignment[other.player_id]) return false
+      return championIdsOf(other).every((id) => used.has(id))
+    })
+    if (breaksSomeone) {
+      used.delete(pick)
       delete assignment[player.player_id]
     }
-    return false
   }
 
-  return tryAssign(0) ? assignment : null
+  const remaining = players
+    .filter((p) => !assignment[p.player_id])
+    .map((p) => ({
+      ...p,
+      champions: playerChampions(p).filter((c) => !used.has(c.champion_id)),
+    }))
+
+  return { assignment, used, remaining }
+}
+
+/** DFS leve: listas já de ids, MRV (menos opções primeiro). */
+function canAssignIds(lists: string[][], used: Set<string>): boolean {
+  if (lists.some((l) => l.length === 0)) return false
+  const ordered = [...lists].sort((a, b) => a.length - b.length)
+  return dfs(ordered, 0, used)
+}
+
+/** Verifica se dá pra atribuir um campeão distinto a cada jogador do match. */
+export function canAssignUniqueChampions(
+  players: ThemeMatchPlayer[],
+  lockedPicks?: Record<string, string> | null,
+): boolean {
+  if (players.length === 0) return false
+  const reserved = reserveAramPicks(players, lockedPicks)
+  if (reserved.remaining.some((p) => championIdsOf(p).length === 0)) {
+    return false
+  }
+  if (reserved.remaining.length === 0) return true
+  const lists = reserved.remaining.map((p) => championIdsOf(p))
+  return canAssignIds(lists, new Set(reserved.used))
+}
+
+/**
+ * Atribuição ARAM rápida: reserva picks da select, completa com guloso
+ * (escassez + maestria). DFS só se o guloso falhar.
+ */
+export function suggestAramAssignment(
+  players: ThemeMatchPlayer[],
+  lockedPicks?: Record<string, string> | null,
+): Record<string, string> | null {
+  if (players.length === 0) return null
+
+  const attempt = (picks: Record<string, string> | null | undefined) => {
+    const reserved = reserveAramPicks(players, picks)
+    if (reserved.remaining.some((p) => championIdsOf(p).length === 0)) {
+      return null
+    }
+
+    const assignment: Record<string, string> = { ...reserved.assignment }
+    const used = new Set(reserved.used)
+    const order = [...reserved.remaining].sort(
+      (a, b) => championIdsOf(a).length - championIdsOf(b).length,
+    )
+
+    // Guloso
+    let greedyOk = true
+    for (const player of order) {
+      const champs = [...playerChampions(player)].sort((a, b) => {
+        const byPts = masteryPoints(b) - masteryPoints(a)
+        if (byPts !== 0) return byPts
+        const byLvl = masteryLevel(b) - masteryLevel(a)
+        if (byLvl !== 0) return byLvl
+        return (a.champion_name ?? '').localeCompare(
+          b.champion_name ?? '',
+          'pt-BR',
+        )
+      })
+      const choice = champs.find((c) => !used.has(c.champion_id))
+      if (!choice) {
+        greedyOk = false
+        break
+      }
+      used.add(choice.champion_id)
+      assignment[player.player_id] = choice.champion_id
+    }
+    if (greedyOk) return assignment
+
+    // DFS de fallback (sem heurísticas caras)
+    const lists = order.map((p) => championIdsOf(p))
+    const dfsAssign: Record<string, string> = { ...reserved.assignment }
+    const dfsUsed = new Set(reserved.used)
+
+    function search(idx: number): boolean {
+      if (idx >= order.length) return true
+      const player = order[idx]
+      for (const cid of lists[idx]) {
+        if (dfsUsed.has(cid)) continue
+        dfsUsed.add(cid)
+        dfsAssign[player.player_id] = cid
+        if (search(idx + 1)) return true
+        dfsUsed.delete(cid)
+        delete dfsAssign[player.player_id]
+      }
+      return false
+    }
+
+    return search(0) ? dfsAssign : null
+  }
+
+  const withLocks = attempt(lockedPicks)
+  if (withLocks) return withLocks
+  if (lockedPicks && Object.keys(lockedPicks).length > 0) {
+    return attempt(null)
+  }
+  return null
+}
+
+/** @deprecated use suggestAramAssignment — mantido p/ SR/legado */
+export function suggestUniqueChampionAssignment(
+  players: ThemeMatchPlayer[],
+  lockedPicks?: Record<string, string> | null,
+): Record<string, string> | null {
+  return suggestAramAssignment(players, lockedPicks)
+}
+
+/** Compat: applyLocked antigo → reserveAramPicks */
+export function applyLockedChampionPicks(
+  players: ThemeMatchPlayer[],
+  lockedPicks: Record<string, string> | null | undefined,
+): {
+  assignment: Record<string, string>
+  used: Set<string>
+  remaining: ThemeMatchPlayer[]
+  lockHits: number
+} | null {
+  const reserved = reserveAramPicks(players, lockedPicks)
+  if (reserved.remaining.some((p) => championIdsOf(p).length === 0)) {
+    return null
+  }
+  return {
+    ...reserved,
+    lockHits: Object.keys(reserved.assignment).length,
+  }
+}
+
+/** Quantos jogadores do tema têm o próprio pick da select neste tema. */
+export function countAramPlayerPickHits(
+  players: ThemeMatchPlayer[],
+  picksByPlayer: Record<string, string> | null | undefined,
+): number {
+  if (!picksByPlayer) return 0
+  let hits = 0
+  for (const p of players) {
+    const pick = picksByPlayer[p.player_id]
+    if (!pick) continue
+    if (playerChampions(p).some((c) => c.champion_id === pick)) hits += 1
+  }
+  return hits
+}
+
+/** @deprecated use countAramPlayerPickHits — não confundir com score ponderado */
+export function countLockedPickHits(
+  players: ThemeMatchPlayer[],
+  lockedPicks: Record<string, string> | null | undefined,
+): number {
+  return countAramPlayerPickHits(players, lockedPicks)
+}
+
+/**
+ * Atribuição com campeão âncora: reserva o champ para `ownerPlayerId`
+ * (obrigatório se informado) e completa o resto sem conflito.
+ */
+export function suggestAssignmentAroundChampion(
+  players: ThemeMatchPlayer[],
+  championId: string,
+  ownerPlayerId: string | null,
+  roleAware: boolean,
+): Record<string, string> | null {
+  if (!championId || players.length === 0) return null
+
+  let owners = players.filter((p) =>
+    playerChampions(p).some((c) => c.champion_id === championId),
+  )
+  if (ownerPlayerId) {
+    owners = owners.filter((p) => p.player_id === ownerPlayerId)
+  }
+  if (owners.length === 0) return null
+
+  const open = openLaneRoles(players)
+  const rankedOwners = [...owners].sort((a, b) => {
+    if (roleAware) {
+      const aChamp = playerChampions(a).find((c) => c.champion_id === championId)
+      const bChamp = playerChampions(b).find((c) => c.champion_id === championId)
+      const byFit =
+        playerChampFitScore(b, bChamp?.roles, open) -
+        playerChampFitScore(a, aChamp?.roles, open)
+      if (byFit !== 0) return byFit
+    }
+    const aChamp = playerChampions(a).find((c) => c.champion_id === championId)
+    const bChamp = playerChampions(b).find((c) => c.champion_id === championId)
+    const byPts = masteryPoints(bChamp ?? {}) - masteryPoints(aChamp ?? {})
+    if (byPts !== 0) return byPts
+    return (a.display_name ?? '').localeCompare(b.display_name ?? '', 'pt-BR')
+  })
+
+  for (const owner of rankedOwners) {
+    const rest = players.filter((p) => p.player_id !== owner.player_id)
+    const restWithoutChamp = rest.map((p) => ({
+      ...p,
+      champions: playerChampions(p).filter((c) => c.champion_id !== championId),
+    }))
+    if (restWithoutChamp.some((p) => playerChampions(p).length === 0)) {
+      continue
+    }
+    const restAssignment =
+      restWithoutChamp.length === 0
+        ? {}
+        : roleAware
+          ? suggestRoleAwareAssignment(restWithoutChamp)
+          : suggestUniqueChampionAssignment(restWithoutChamp)
+    if (restAssignment === null && restWithoutChamp.length > 0) continue
+    return {
+      ...(restAssignment ?? {}),
+      [owner.player_id]: championId,
+    }
+  }
+  return null
 }
 
 /**
@@ -277,16 +481,19 @@ export function suggestRoleAwareAssignment(
     const playerChamps = playerChampions(player)
 
     const champs = [...playerChamps].sort((a, b) => {
-      const aSole = soleOptionForLater(a.champion_id, laterStart) ? 1 : 0
-      const bSole = soleOptionForLater(b.champion_id, laterStart) ? 1 : 0
-      if (aSole !== bSole) return aSole - bSole
+      // Rota escolhida manda: primária >> secundária >> off
       const byFit =
         playerChampFitScore(player, b.roles, rolesNow) -
         playerChampFitScore(player, a.roles, rolesNow)
       if (byFit !== 0) return byFit
+      const aSole = soleOptionForLater(a.champion_id, laterStart) ? 1 : 0
+      const bSole = soleOptionForLater(b.champion_id, laterStart) ? 1 : 0
+      if (aSole !== bSole) return aSole - bSole
       const byPts = masteryPoints(b) - masteryPoints(a)
       if (byPts !== 0) return byPts
-      return masteryLevel(b) - masteryLevel(a)
+      const byLvl = masteryLevel(b) - masteryLevel(a)
+      if (byLvl !== 0) return byLvl
+      return a.champion_name.localeCompare(b.champion_name, 'pt-BR')
     })
 
     for (const c of champs) {
@@ -307,19 +514,15 @@ export function suggestRoleAwareAssignment(
       }
 
       const fit = playerChampFitScore(player, c.roles, rolesNow)
-      // Fill: evita rota já pegada se ainda houver opção em rota livre
-      if (
-        isFlexibleRole(player.primary_role, player.secondary_role) &&
-        fit === 0 &&
-        champs.some(
-          (other) =>
-            !used.has(other.champion_id) &&
-            playerChampFitScore(player, other.roles, rolesNow) > 0 &&
-            !soleOptionForLater(other.champion_id, laterStart),
-        )
-      ) {
-        continue
-      }
+      // Nunca desça de rota (ex.: secundária/off) se ainda há opção melhor livre
+      const hasBetterFit = champs.some(
+        (other) =>
+          other.champion_id !== c.champion_id &&
+          !used.has(other.champion_id) &&
+          playerChampFitScore(player, other.roles, rolesNow) > fit &&
+          !soleOptionForLater(other.champion_id, laterStart),
+      )
+      if (hasBetterFit) continue
 
       used.add(c.champion_id)
       assignment[player.player_id] = c.champion_id
@@ -374,6 +577,10 @@ export function sortChampionsByRole(
       : roleFitScore(b.roles, primary, secondary) -
         roleFitScore(a.roles, primary, secondary)
     if (fit !== 0) return fit
+    const byPts = masteryPoints(b) - masteryPoints(a)
+    if (byPts !== 0) return byPts
+    const byLvl = masteryLevel(b) - masteryLevel(a)
+    if (byLvl !== 0) return byLvl
     return (a.champion_name ?? '').localeCompare(b.champion_name ?? '', 'pt-BR')
   })
 }

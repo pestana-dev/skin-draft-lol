@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AramPool } from '../components/AramPool'
 import { usePlayer } from '../contexts/PlayerContext'
-import type { ChampSelectMember } from '../lib/desktop'
+import {
+  useLiveChampSelectPicks,
+  type LivePick,
+} from '../hooks/useLiveChampSelectPicks'
+import {
+  useRoomMatches,
+  type LobbyParticipant,
+} from '../hooks/useRoomMatches'
 import { collectionSyncLabel, formatError, matchSizeLabel } from '../lib/format'
 import {
-  canAssignUniqueChampions,
   championRoleLabels,
   coversOpenRole,
   isFlexibleRole,
@@ -15,81 +21,21 @@ import {
   roleFitScore,
   roleLabel,
   sortChampionsByRole,
+  suggestAramAssignment,
+  suggestAssignmentAroundChampion,
   suggestRoleAwareAssignment,
-  suggestUniqueChampionAssignment,
   type LaneRole,
 } from '../lib/matchFeasibility'
+import {
+  buildMatchGroups,
+  collectAnchorOptions,
+  type AnchorOption,
+  type LineupSlot,
+  type MatchGroup,
+} from '../lib/matchGroups'
+import { resolveQueueKind } from '../lib/resolveQueueKind'
 import { supabase } from '../lib/supabase'
-import type {
-  Champion,
-  DraftParticipant,
-  DraftRoom,
-  Player,
-  ThemeMatch,
-  ThemeMatchPlayer,
-  ThemeMatchesResponse,
-} from '../lib/types'
-
-/** Espelho da select do client (não é pick persistido no Skin Draft). */
-type LivePick = {
-  player_id: string
-  skin_id: string | null
-  skin_name: string
-  champion_id: string
-  champion_name: string
-  champion_image_url?: string | null
-  splash_url?: string | null
-  tile_url?: string | null
-  lcu_champion_id: number
-  lcu_skin_id: number
-  is_intent: boolean
-}
-
-type LobbyParticipant = DraftParticipant & {
-  player?: Player & { skin_count?: number }
-}
-
-function normalizeMatch(match: ThemeMatch): ThemeMatch {
-  const rawPlayers =
-    match.players ??
-    (Array.isArray(match.members) &&
-    match.members[0] &&
-    'champions' in match.members[0]
-      ? (match.members as ThemeMatchPlayer[])
-      : [])
-  const players = (rawPlayers ?? []).map((p) => ({
-    ...p,
-    champions: (Array.isArray(p.champions) ? p.champions : []).map((c) => ({
-      ...c,
-      skins: Array.isArray(c?.skins) ? c.skins : [],
-      roles: Array.isArray(c?.roles) ? c.roles : [],
-    })),
-  }))
-  return { ...match, players }
-}
-
-/** Só temas com combinação real (campeões únicos possíveis), melhores primeiro. */
-function feasibleMatches(matches: ThemeMatch[]): ThemeMatch[] {
-  try {
-    return matches
-      .filter((m) => {
-        try {
-          return canAssignUniqueChampions(m.players ?? [])
-        } catch {
-          return false
-        }
-      })
-      .sort((a, b) => {
-        const byCount = (b.match_count ?? 0) - (a.match_count ?? 0)
-        if (byCount !== 0) return byCount
-        const byOptions = (b.option_count ?? 0) - (a.option_count ?? 0)
-        if (byOptions !== 0) return byOptions
-        return (a.theme_name ?? '').localeCompare(b.theme_name ?? '', 'pt-BR')
-      })
-  } catch {
-    return []
-  }
-}
+import type { Champion, ThemeMatch, ThemeMatchPlayer } from '../lib/types'
 
 function syncBadge(p: LobbyParticipant) {
   const count = p.player?.skin_count ?? 0
@@ -97,294 +43,76 @@ function syncBadge(p: LobbyParticipant) {
   return collectionSyncLabel(p.player?.last_inventory_sync_at, count)
 }
 
-function matchMemberToParticipant(
-  member: ChampSelectMember,
-  participants: LobbyParticipant[],
-  mePuuid?: string | null,
-): string | null {
-  if (member.isLocal && mePuuid) {
-    const self = participants.find((p) => p.player?.puuid === mePuuid)
-    if (self) return self.player_id
-  }
-  if (member.puuid) {
-    const byPuuid = participants.find((p) => p.player?.puuid === member.puuid)
-    if (byPuuid) return byPuuid.player_id
-  }
-  const gameName = member.gameName?.trim().toLowerCase()
-  const tag = member.tagLine?.trim().toLowerCase()
-  if (gameName) {
-    const byName = participants.find((p) => {
-      const gn = p.player?.game_name?.trim().toLowerCase()
-      const tl = p.player?.tag_line?.trim().toLowerCase()
-      if (!gn || gn !== gameName) return false
-      if (tag && tl && tl !== tag) return false
-      return true
-    })
-    if (byName) return byName.player_id
-  }
-  return null
-}
-
 export function MatchesPage() {
   const { roomId } = useParams<{ roomId: string }>()
-  const { me, lcu, isDesktop, pickInClient } = usePlayer()
+  const {
+    me,
+    lcu,
+    isDesktop,
+    pickInClient,
+    syncParty,
+    lastInventorySyncAt,
+  } = usePlayer()
   const champSelect = lcu?.champSelect ?? null
   const inChampSelect = Boolean(champSelect) || Boolean(lcu?.party?.inChampSelect)
   const canPick = isDesktop && inChampSelect
 
-  const [room, setRoom] = useState<DraftRoom | null>(null)
-  const [participants, setParticipants] = useState<LobbyParticipant[]>([])
+  const { room, participants, data, error, setError, loading, refreshRoom } =
+    useRoomMatches(roomId)
+
+  const {
+    championsByKey,
+    skinMetaByLcuId,
+    livePicksByPlayer,
+    activePicks,
+    takenChampions,
+    lockedAramPicks,
+    lockedAramPicksKey,
+  } = useLiveChampSelectPicks({
+    champSelect,
+    participants,
+    mePuuid: me?.puuid,
+    onError: (msg) => setError(msg),
+  })
+
   const [aramChampions, setAramChampions] = useState<Champion[]>([])
-  const [championsByKey, setChampionsByKey] = useState<Map<number, Champion>>(
-    () => new Map(),
-  )
-  const [skinMetaByLcuId, setSkinMetaByLcuId] = useState<
-    Map<number, { id: string; name: string; splash_url: string | null; tile_url: string | null }>
-  >(() => new Map())
-  const [data, setData] = useState<ThemeMatchesResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [anchorQuery, setAnchorQuery] = useState('')
+  const [anchorChampionId, setAnchorChampionId] = useState<string | null>(null)
+  const [anchorPlayerId, setAnchorPlayerId] = useState<string | null>(null)
+  const [anchorOpen, setAnchorOpen] = useState(false)
+  const assignmentCacheRef = useRef(
+    new Map<string, Record<string, string> | null>(),
+  )
+  const assignmentCacheKeyRef = useRef('')
 
   const isHost = Boolean(room?.host_id && room.host_id === me?.id)
   const aramPool = room?.settings?.aram_pool ?? []
-
-  const loadLobby = useCallback(async () => {
-    if (!roomId) return
-    const { data: raw, error: rpcError } = await supabase.rpc('get_room_lobby', {
-      p_room_id: roomId,
-    })
-    if (rpcError) throw rpcError
-    const payload = raw as {
-      room: DraftRoom
-      participants: LobbyParticipant[]
-    }
-    if (!payload?.room) throw new Error('Sala não encontrada')
-    setRoom(payload.room)
-    setParticipants(payload.participants ?? [])
-  }, [roomId])
-
-  const loadMatches = useCallback(async () => {
-    if (!roomId) return
-    const { data: raw, error: rpcError } = await supabase.rpc(
-      'analyze_theme_matches',
-      { p_room_id: roomId },
-    )
-    if (rpcError) throw rpcError
-    const parsed = raw as ThemeMatchesResponse
-    setData({
-      ...parsed,
-      matches: feasibleMatches((parsed.matches ?? []).map(normalizeMatch)),
-    })
-  }, [roomId])
-
-  const loadAll = useCallback(async () => {
-    if (!roomId) return
-    setLoading(true)
-    setError(null)
-    try {
-      await loadLobby()
-      try {
-        await loadMatches()
-      } catch (matchErr) {
-        // Lobby ok — mostra sala mesmo se a análise falhar
-        setData(null)
-        setError(formatError(matchErr))
-      }
-    } catch (err) {
-      setError(formatError(err))
-      setRoom(null)
-      setParticipants([])
-      setData(null)
-    } finally {
-      setLoading(false)
-    }
-  }, [roomId, loadLobby, loadMatches])
+  const aramPoolKey = aramPool.join('|')
 
   useEffect(() => {
-    if (!roomId) return
-    let cancelled = false
-    setRoom(null)
-    setParticipants([])
-    setData(null)
-    setError(null)
-    setLoading(true)
-
-    void (async () => {
-      try {
-        const { data: raw, error: rpcError } = await supabase.rpc(
-          'get_room_lobby',
-          { p_room_id: roomId },
-        )
-        if (cancelled) return
-        if (rpcError) throw rpcError
-        const payload = raw as {
-          room: DraftRoom
-          participants: LobbyParticipant[]
-        }
-        if (!payload?.room) throw new Error('Sala não encontrada')
-        setRoom(payload.room)
-        setParticipants(payload.participants ?? [])
-
-        try {
-          const { data: matchRaw, error: matchError } = await supabase.rpc(
-            'analyze_theme_matches',
-            { p_room_id: roomId },
-          )
-          if (cancelled) return
-          if (matchError) throw matchError
-          const parsed = matchRaw as ThemeMatchesResponse
-          setData({
-            ...parsed,
-            matches: feasibleMatches(
-              (parsed.matches ?? []).map(normalizeMatch),
-            ),
-          })
-        } catch (matchErr) {
-          if (!cancelled) {
-            setData(null)
-            setError(formatError(matchErr))
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(formatError(err))
-          setRoom(null)
-          setParticipants([])
-          setData(null)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [roomId])
-
-  useEffect(() => {
-    let cancelled = false
-    void supabase
-      .from('champions')
-      .select('id, name, key, image_url')
-      .then(({ data: champs, error: champError }) => {
-        if (cancelled) return
-        if (champError) {
-          setError(formatError(champError))
-          return
-        }
-        const byKey = new Map<number, Champion>()
-        const poolSet = new Set(aramPool)
-        const aramList: Champion[] = []
-        for (const raw of champs ?? []) {
-          const c = raw as Champion
-          const key = Number(c.key)
-          if (Number.isFinite(key) && key > 0) byKey.set(key, c)
-          if (poolSet.has(c.id)) aramList.push(c)
-        }
-        aramList.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
-        setChampionsByKey(byKey)
-        setAramChampions(aramPool.length ? aramList : [])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [JSON.stringify(aramPool)])
-
-  useEffect(() => {
-    const team = champSelect?.myTeam ?? []
-    const lcuSkinIds = [
-      ...new Set(
-        team
-          .map((m) => m.selectedSkinId)
-          .filter((id) => Number.isFinite(id) && id > 0),
-      ),
-    ]
-    if (lcuSkinIds.length === 0) {
-      setSkinMetaByLcuId(new Map())
+    if (championsByKey.size === 0 || !aramPoolKey) {
+      setAramChampions([])
       return
     }
-    let cancelled = false
-    void (async () => {
-      try {
-        const { data: mapped, error: mapError } = await supabase.rpc(
-          'map_lcu_skin_ids',
-          { p_item_ids: lcuSkinIds },
-        )
-        if (cancelled) return
-        if (mapError) throw mapError
-        const skinIds = (mapped as string[] | null) ?? []
-        if (skinIds.length === 0) {
-          setSkinMetaByLcuId(new Map())
-          return
-        }
-        const { data: skins, error: skinError } = await supabase
-          .from('skins')
-          .select('id, name, num, splash_url, tile_url, champion_id, champions(key)')
-          .in('id', skinIds)
-        if (cancelled) return
-        if (skinError) throw skinError
-        const next = new Map<
-          number,
-          { id: string; name: string; splash_url: string | null; tile_url: string | null }
-        >()
-        for (const row of skins ?? []) {
-          const champ = row.champions as { key?: string | null } | null
-          const key = Number(champ?.key)
-          const num = Number(row.num ?? 0)
-          if (!Number.isFinite(key) || key <= 0) continue
-          const lcuId = key * 1000 + num
-          next.set(lcuId, {
-            id: row.id as string,
-            name: row.name as string,
-            splash_url: (row.splash_url as string | null) ?? null,
-            tile_url: (row.tile_url as string | null) ?? null,
-          })
-        }
-        setSkinMetaByLcuId(next)
-      } catch {
-        if (!cancelled) setSkinMetaByLcuId(new Map())
-      }
-    })()
-    return () => {
-      cancelled = true
+    const poolSet = new Set(aramPoolKey.split('|').filter(Boolean))
+    const aramList: Champion[] = []
+    for (const c of championsByKey.values()) {
+      if (poolSet.has(c.id)) aramList.push(c)
     }
-  }, [champSelect])
+    aramList.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+    setAramChampions(aramList)
+  }, [aramPoolKey, championsByKey])
 
+  // Recarrega combinações após sync de inventário
+  const lastHandledInventoryRef = useRef<number | null>(null)
   useEffect(() => {
-    if (!roomId) return
-    const channel = supabase
-      .channel(`room:${roomId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'draft_rooms', filter: `id=eq.${roomId}` },
-        () => {
-          void loadLobby()
-            .then(() => loadMatches())
-            .catch((err) => setError(formatError(err)))
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'draft_participants',
-          filter: `room_id=eq.${roomId}`,
-        },
-        () => {
-          void loadLobby()
-            .then(() => loadMatches())
-            .catch((err) => setError(formatError(err)))
-        },
-      )
-      .subscribe()
-    return () => {
-      void supabase.removeChannel(channel)
-    }
-  }, [roomId, loadLobby, loadMatches])
+    if (!roomId || !lastInventorySyncAt) return
+    if (lastHandledInventoryRef.current === lastInventorySyncAt) return
+    lastHandledInventoryRef.current = lastInventorySyncAt
+    void refreshRoom({ quiet: true }).catch(() => undefined)
+  }, [roomId, lastInventorySyncAt, refreshRoom])
 
   async function clearAramPool() {
     if (!room) return
@@ -396,8 +124,7 @@ export function MatchesPage() {
         p_champion_ids: [],
       })
       if (rpcError) throw rpcError
-      await loadLobby()
-      await loadMatches()
+      await refreshRoom({ quiet: true })
     } catch (err) {
       setError(formatError(err))
     } finally {
@@ -410,6 +137,15 @@ export function MatchesPage() {
     setPicking(true)
     setError(null)
     try {
+      // Cache: skin já mapeada via select (LCU id)
+      for (const [lcuId, meta] of skinMetaByLcuId) {
+        if (meta.id !== skinId) continue
+        const championKey = Math.floor(lcuId / 1000)
+        if (championKey > 0) {
+          await pickInClient(championKey, lcuId)
+          return
+        }
+      }
       const { data: skin, error: skinError } = await supabase
         .from('skins')
         .select('id, num, champions(key)')
@@ -422,7 +158,8 @@ export function MatchesPage() {
       if (!Number.isFinite(championKey) || championKey <= 0) {
         throw new Error('Campeão sem key Riot — sincronize o catálogo')
       }
-      const lcuSkinId = championKey * 1000 + (Number.isFinite(skinNum) ? skinNum : 0)
+      const lcuSkinId =
+        championKey * 1000 + (Number.isFinite(skinNum) ? skinNum : 0)
       await pickInClient(championKey, lcuSkinId)
     } catch (err) {
       setError(formatError(err))
@@ -430,65 +167,6 @@ export function MatchesPage() {
       setPicking(false)
     }
   }
-
-  const livePicksByPlayer = useMemo(() => {
-    const out: Record<string, LivePick> = {}
-    const team = champSelect?.myTeam ?? []
-    if (team.length === 0) return out
-
-    for (const member of team) {
-      const effectiveChamp =
-        member.championId > 0
-          ? member.championId
-          : member.championPickIntent > 0
-            ? member.championPickIntent
-            : 0
-      if (effectiveChamp <= 0) continue
-
-      const playerId = matchMemberToParticipant(member, participants, me?.puuid)
-      if (!playerId) continue
-
-      const champ = championsByKey.get(effectiveChamp)
-      const skinMeta =
-        member.selectedSkinId > 0
-          ? skinMetaByLcuId.get(member.selectedSkinId)
-          : undefined
-
-      out[playerId] = {
-        player_id: playerId,
-        skin_id: skinMeta?.id ?? null,
-        skin_name: skinMeta?.name ?? (member.selectedSkinId > 0 ? 'Skin' : 'Padrão'),
-        champion_id: champ?.id ?? String(effectiveChamp),
-        champion_name: champ?.name ?? `Campeão ${effectiveChamp}`,
-        champion_image_url: champ?.image_url ?? null,
-        splash_url: skinMeta?.splash_url ?? null,
-        tile_url: skinMeta?.tile_url ?? champ?.image_url ?? null,
-        lcu_champion_id: effectiveChamp,
-        lcu_skin_id: member.selectedSkinId > 0 ? member.selectedSkinId : 0,
-        is_intent: member.championId <= 0 && member.championPickIntent > 0,
-      }
-    }
-    return out
-  }, [
-    champSelect,
-    participants,
-    me?.puuid,
-    championsByKey,
-    skinMetaByLcuId,
-  ])
-
-  const activePicks = useMemo(
-    () => Object.values(livePicksByPlayer),
-    [livePicksByPlayer],
-  )
-
-  const takenChampions = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const pick of activePicks) {
-      if (pick.champion_id) map.set(pick.champion_id, pick.player_id)
-    }
-    return map
-  }, [activePicks])
 
   const localLivePick = me?.id ? livePicksByPlayer[me.id] ?? null : null
   const teamReady =
@@ -498,6 +176,119 @@ export function MatchesPage() {
       const pick = livePicksByPlayer[p.player_id]
       return Boolean(pick && !pick.is_intent && pick.lcu_champion_id > 0)
     })
+
+  const matches = data?.matches ?? []
+  const total = data?.participant_total ?? participants.length
+  const queueKind = resolveQueueKind({
+    lcuQueueKind: lcu?.party?.queueKind,
+    partyId: lcu?.party?.partyId,
+    queueId: lcu?.party?.queueId ?? null,
+    inChampSelect: Boolean(lcu?.party?.inChampSelect),
+    benchEnabled: Boolean(champSelect?.benchEnabled),
+    dataQueueKind: data?.queue_kind,
+    roomQueueKind: room?.settings?.queue_kind,
+  })
+  const isSr = queueKind === 'sr'
+  const isAram = queueKind === 'aram'
+  const filterAram = isAram && Boolean(data?.filter_aram)
+  const showAramPool =
+    isAram &&
+    (filterAram || aramPool.length > 0 || Boolean(champSelect?.benchEnabled))
+  const showRoles = isSr
+
+  const allAnchorOptions = useMemo(
+    () => collectAnchorOptions(matches),
+    [matches],
+  )
+  const anchorSelected = useMemo(() => {
+    if (!anchorChampionId || !anchorPlayerId) return null
+    return (
+      allAnchorOptions.find(
+        (o) =>
+          o.champion_id === anchorChampionId &&
+          o.player_id === anchorPlayerId,
+      ) ?? null
+    )
+  }, [allAnchorOptions, anchorChampionId, anchorPlayerId])
+  const filteredAnchorOptions = useMemo(() => {
+    const q = anchorQuery.trim().toLowerCase()
+    if (!q) return allAnchorOptions.slice(0, 14)
+    return allAnchorOptions
+      .filter(
+        (o) =>
+          o.champion_name.toLowerCase().includes(q) ||
+          o.display_name.toLowerCase().includes(q),
+      )
+      .slice(0, 14)
+  }, [anchorQuery, allAnchorOptions])
+
+  const matchGroups = useMemo((): MatchGroup[] => {
+    if (assignmentCacheKeyRef.current !== lockedAramPicksKey) {
+      assignmentCacheRef.current = new Map()
+      assignmentCacheKeyRef.current = lockedAramPicksKey
+    }
+    return buildMatchGroups({
+      matches,
+      showRoles,
+      isAram,
+      anchorChampionId,
+      anchorPlayerId,
+      lockedAramPicks,
+      lockedAramPicksKey,
+      assignmentCache: assignmentCacheRef.current,
+    })
+  }, [
+    matches,
+    showRoles,
+    isAram,
+    anchorChampionId,
+    anchorPlayerId,
+    lockedAramPicks,
+    lockedAramPicksKey,
+  ])
+
+  const anchoredMatchCount = useMemo(
+    () => matchGroups.reduce((n, g) => n + g.items.length, 0),
+    [matchGroups],
+  )
+
+  useEffect(() => {
+    if (!showRoles && (anchorChampionId || anchorPlayerId)) {
+      setAnchorChampionId(null)
+      setAnchorPlayerId(null)
+      setAnchorQuery('')
+    }
+  }, [showRoles, anchorChampionId, anchorPlayerId])
+
+  // LCU em SR com sala ainda suja de ARAM → re-sync e recarrega combinações
+  useEffect(() => {
+    if (!isDesktop || !roomId || lcu?.party?.queueKind !== 'sr') return
+    const staleAram =
+      room?.settings?.queue_kind === 'aram' ||
+      (room?.settings?.aram_pool?.length ?? 0) > 0 ||
+      data?.filter_aram === true ||
+      data?.queue_kind === 'aram'
+    if (!staleAram) return
+    let cancelled = false
+    void syncParty()
+      .then(() => {
+        if (!cancelled) return refreshRoom({ quiet: true })
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [
+    isDesktop,
+    roomId,
+    lcu?.party?.queueKind,
+    room?.settings?.queue_kind,
+    room?.settings?.aram_pool,
+    data?.filter_aram,
+    data?.queue_kind,
+    syncParty,
+    refreshRoom,
+  ])
 
   if (loading && !room) {
     return <p className="text-[var(--text-muted)]">Montando o party…</p>
@@ -511,7 +302,7 @@ export function MatchesPage() {
         <div className="mt-4 flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={() => void loadAll()}
+            onClick={() => void refreshRoom()}
             className="rounded-md bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[var(--ink)]"
           >
             Tentar de novo
@@ -523,28 +314,6 @@ export function MatchesPage() {
       </div>
     )
   }
-
-  const matches = data?.matches ?? []
-  const total = data?.participant_total ?? participants.length
-  const filterAram =
-    Boolean(data?.filter_aram) ||
-    ((data?.aram_pool?.length ?? aramPool.length) > 0 &&
-      data?.queue_kind !== 'sr' &&
-      room?.settings?.queue_kind !== 'sr')
-  const queueKind =
-    data?.queue_kind === 'unknown' && filterAram
-      ? 'aram'
-      : (data?.queue_kind ??
-        room?.settings?.queue_kind ??
-        (filterAram ? 'aram' : 'unknown'))
-  const showAramPool =
-    filterAram ||
-    queueKind === 'aram' ||
-    aramPool.length > 0 ||
-    Boolean(champSelect?.benchEnabled)
-  /** Roles só fazem sentido no SR — nunca no ARAM. */
-  const showRoles =
-    queueKind === 'sr' && !showAramPool && !champSelect?.benchEnabled
 
   return (
     <div className="animate-fade-up">
@@ -565,7 +334,7 @@ export function MatchesPage() {
         </div>
         <button
           type="button"
-          onClick={() => void loadAll()}
+          onClick={() => void refreshRoom()}
           disabled={loading || busy || picking}
           className="rounded-md border border-[var(--line-strong)] px-4 py-2 text-sm disabled:opacity-50"
         >
@@ -612,6 +381,28 @@ export function MatchesPage() {
         <p className="mt-4 text-sm text-[var(--danger)]">{error}</p>
       ) : null}
 
+      {showRoles ? (
+        <ChampionAnchorBar
+          query={anchorQuery}
+          onQueryChange={setAnchorQuery}
+          open={anchorOpen}
+          onOpenChange={setAnchorOpen}
+          options={filteredAnchorOptions}
+          selected={anchorSelected}
+          onSelect={(opt) => {
+            setAnchorChampionId(opt.champion_id)
+            setAnchorPlayerId(opt.player_id)
+            setAnchorQuery('')
+            setAnchorOpen(false)
+          }}
+          onClear={() => {
+            setAnchorChampionId(null)
+            setAnchorPlayerId(null)
+            setAnchorQuery('')
+          }}
+        />
+      ) : null}
+
       <div className="mt-6">
         {loading && !data ? (
           <p className="text-[var(--text-muted)]">Analisando coleções…</p>
@@ -636,24 +427,79 @@ export function MatchesPage() {
               Ir à coleção
             </Link>
           </div>
+        ) : anchoredMatchCount === 0 &&
+          anchorChampionId &&
+          anchorPlayerId ? (
+          <div className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)] p-8 text-center">
+            <p className="text-[var(--text-muted)]">
+              Nenhum tema fecha o time com{' '}
+              {anchorSelected?.champion_name ?? 'esse campeão'} para{' '}
+              {anchorSelected?.display_name ?? 'essa pessoa'}.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setAnchorChampionId(null)
+                setAnchorPlayerId(null)
+                setAnchorQuery('')
+              }}
+              className="mt-4 text-sm text-[var(--teal-soft)] hover:underline"
+            >
+              Limpar busca
+            </button>
+          </div>
         ) : (
           <div className="space-y-5">
-            {matches.map((match, index) => (
-              <MatchCard
-                key={match.theme_id}
-                match={match}
-                total={total}
-                rank={index + 1}
-                showRoles={showRoles}
-                canPick={canPick}
-                meId={me?.id ?? null}
-                picks={livePicksByPlayer}
-                localPick={localLivePick}
-                takenChampions={takenChampions}
-                picking={picking}
-                onPick={(skinId) => void pickSkin(skinId)}
-              />
-            ))}
+            {matchGroups.map((group, groupIndex) => {
+              const anchored = Boolean(group.lineup)
+              return (
+                <section key={group.key} className="space-y-3">
+                  {group.lineup ? (
+                    <LineupBanner
+                      lineup={group.lineup}
+                      themeCount={group.items.length}
+                      index={groupIndex + 1}
+                      lockHits={group.lockHits}
+                    />
+                  ) : null}
+                  <div
+                    className={
+                      anchored ? 'space-y-3 pl-0 sm:pl-2' : 'space-y-5'
+                    }
+                  >
+                    {group.items.map(({ match, assignment, lockHits }, index) => (
+                      <MatchCard
+                        key={match.theme_id}
+                        match={match}
+                        total={total}
+                        rank={
+                          isAram
+                            ? groupIndex + 1
+                            : anchored
+                              ? index + 1
+                              : groupIndex + 1
+                        }
+                        showRoles={showRoles}
+                        anchorChampionId={
+                          showRoles ? anchorChampionId : null
+                        }
+                        anchorPlayerId={showRoles ? anchorPlayerId : null}
+                        pickHits={isAram ? (lockHits ?? 0) : 0}
+                        lockedPicks={isAram ? lockedAramPicks : null}
+                        fixedAssignment={assignment}
+                        canPick={canPick}
+                        meId={me?.id ?? null}
+                        picks={livePicksByPlayer}
+                        localPick={localLivePick}
+                        takenChampions={takenChampions}
+                        picking={picking}
+                        onPick={(skinId) => void pickSkin(skinId)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )
+            })}
           </div>
         )}
       </div>
@@ -807,11 +653,196 @@ function PicksBar({
   )
 }
 
+function LineupBanner({
+  lineup,
+  themeCount,
+  index,
+  lockHits,
+}: {
+  lineup: LineupSlot[]
+  themeCount: number
+  index: number
+  lockHits?: number
+}) {
+  return (
+    <div className="rounded-[var(--radius)] border border-[var(--gold)]/30 bg-gradient-to-r from-[var(--gold)]/10 via-[var(--panel)]/80 to-[var(--panel)]/40 px-3 py-3">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--gold-soft)]">
+          {lockHits && lockHits > 0
+            ? `Select · formação ${index}`
+            : `Formação ${index}`}
+        </p>
+        <p className="text-[11px] text-[var(--text-muted)]">
+          {lockHits && lockHits > 0
+            ? `${lockHits} pick${lockHits === 1 ? '' : 's'} da select · `
+            : ''}
+          {themeCount} {themeCount === 1 ? 'tema' : 'temas'}
+        </p>
+      </div>
+      <ul className="flex flex-wrap gap-2">
+        {lineup.map((slot) => (
+          <li
+            key={slot.player_id}
+            className={[
+              'flex min-w-[7.5rem] items-center gap-2 rounded-md border px-2 py-1.5',
+              slot.isAnchor
+                ? 'border-[var(--gold)]/55 bg-[var(--gold)]/15'
+                : 'border-[var(--line)] bg-[var(--ink-soft)]/70',
+            ].join(' ')}
+          >
+            {slot.champion_image_url ? (
+              <img
+                src={slot.champion_image_url}
+                alt=""
+                className="h-8 w-8 rounded object-cover"
+              />
+            ) : (
+              <span className="flex h-8 w-8 items-center justify-center rounded bg-[var(--panel)] text-[10px] text-[var(--text-muted)]">
+                ?
+              </span>
+            )}
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium text-[var(--text-strong)]">
+                {slot.champion_name}
+              </span>
+              <span className="block truncate text-[10px] text-[var(--text-muted)]">
+                {slot.display_name}
+                {slot.isAnchor ? ' · base' : ''}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function ChampionAnchorBar({
+  query,
+  onQueryChange,
+  open,
+  onOpenChange,
+  options,
+  selected,
+  onSelect,
+  onClear,
+}: {
+  query: string
+  onQueryChange: (q: string) => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  options: AnchorOption[]
+  selected: AnchorOption | null
+  onSelect: (opt: AnchorOption) => void
+  onClear: () => void
+}) {
+  return (
+    <div className="mt-5 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)]/60 px-3 py-2.5">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+        Campeão + jogador
+      </p>
+      <div className="relative max-w-xl">
+        {selected ? (
+          <div className="flex items-center gap-2 rounded-md border border-[var(--gold)]/40 bg-[var(--gold)]/10 px-2 py-1.5">
+            {selected.champion_image_url ? (
+              <img
+                src={selected.champion_image_url}
+                alt=""
+                className="h-8 w-8 rounded object-cover"
+              />
+            ) : null}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-[var(--text-strong)]">
+                {selected.champion_name}
+              </span>
+              <span className="block truncate text-[11px] text-[var(--text-muted)]">
+                {selected.display_name}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={onClear}
+              className="shrink-0 text-[11px] text-[var(--teal-soft)] hover:underline"
+            >
+              limpar
+            </button>
+          </div>
+        ) : (
+          <>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => {
+                onQueryChange(e.target.value)
+                onOpenChange(true)
+              }}
+              onFocus={() => onOpenChange(true)}
+              onBlur={() => {
+                window.setTimeout(() => onOpenChange(false), 120)
+              }}
+              placeholder="Buscar campeão ou jogador…"
+              className="w-full rounded-md border border-[var(--line)] bg-[var(--ink-soft)] px-3 py-1.5 text-sm text-[var(--text-strong)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--gold)]/50"
+            />
+            {open && options.length > 0 ? (
+              <ul className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-md border border-[var(--line)] bg-[var(--panel)] shadow-lg">
+                {options.map((opt) => (
+                  <li key={opt.key}>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => onSelect(opt)}
+                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--ink-soft)]"
+                    >
+                      {opt.champion_image_url ? (
+                        <img
+                          src={opt.champion_image_url}
+                          alt=""
+                          className="h-7 w-7 rounded object-cover"
+                        />
+                      ) : null}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[var(--text-strong)]">
+                          {opt.champion_name}
+                        </span>
+                        <span className="block truncate text-[11px] text-[var(--text-muted)]">
+                          {opt.display_name}
+                          {opt.theme_count > 1
+                            ? ` · ${opt.theme_count} temas`
+                            : ''}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {open && query.trim() && options.length === 0 ? (
+              <p className="absolute z-20 mt-1 w-full rounded-md border border-[var(--line)] bg-[var(--panel)] px-2.5 py-2 text-xs text-[var(--text-muted)] shadow-lg">
+                Nenhuma combinação campeão + jogador
+              </p>
+            ) : null}
+          </>
+        )}
+      </div>
+      <p className="mt-1.5 text-[10px] text-[var(--text-muted)]">
+        {selected
+          ? 'Temas agrupados pelas formações que fecham com esse campeão nessa pessoa.'
+          : 'Escolha quem joga qual campeão para montar as combinações em torno disso.'}
+      </p>
+    </div>
+  )
+}
+
 function MatchCard({
   match,
   total,
   rank,
   showRoles,
+  anchorChampionId,
+  anchorPlayerId,
+  pickHits,
+  lockedPicks,
+  fixedAssignment,
   canPick,
   meId,
   picks,
@@ -824,6 +855,11 @@ function MatchCard({
   total: number
   rank: number
   showRoles: boolean
+  anchorChampionId: string | null
+  anchorPlayerId: string | null
+  pickHits: number
+  lockedPicks: Record<string, string> | null
+  fixedAssignment: Record<string, string> | null
   canPick: boolean
   meId: string | null
   picks: Record<string, LivePick>
@@ -834,14 +870,33 @@ function MatchCard({
 }) {
   const players = match.players ?? []
   const missing = total - match.match_count
-  let assignment: Record<string, string> | null = null
-  try {
-    assignment = showRoles
-      ? suggestRoleAwareAssignment(players)
-      : suggestUniqueChampionAssignment(players)
-  } catch {
-    assignment = null
-  }
+
+  const assignment = useMemo(() => {
+    if (fixedAssignment) return fixedAssignment
+    try {
+      if (showRoles && anchorChampionId && anchorPlayerId) {
+        return suggestAssignmentAroundChampion(
+          players,
+          anchorChampionId,
+          anchorPlayerId,
+          true,
+        )
+      }
+      return showRoles
+        ? suggestRoleAwareAssignment(players)
+        : suggestAramAssignment(players, lockedPicks)
+    } catch {
+      return null
+    }
+  }, [
+    fixedAssignment,
+    players,
+    showRoles,
+    anchorChampionId,
+    anchorPlayerId,
+    lockedPicks,
+  ])
+
   const openRoles = showRoles ? openLaneRoles(players) : new Set<LaneRole>()
   const optionCount =
     match.option_count ??
@@ -851,6 +906,15 @@ function MatchCard({
     if (!pick) return false
     return p.champions?.some((c) => c.champion_id === pick.champion_id)
   }).length
+
+  const orderedPlayers = useMemo(() => {
+    if (!anchorPlayerId) return players
+    return [...players].sort((a, b) => {
+      if (a.player_id === anchorPlayerId) return -1
+      if (b.player_id === anchorPlayerId) return 1
+      return (a.display_name ?? '').localeCompare(b.display_name ?? '', 'pt-BR')
+    })
+  }, [players, anchorPlayerId])
 
   return (
     <article className="overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)]/90">
@@ -863,6 +927,11 @@ function MatchCard({
           <span className="text-xs text-[var(--text-muted)]">
             {optionCount} {optionCount === 1 ? 'opção' : 'opções'}
           </span>
+          {pickHits > 0 ? (
+            <span className="rounded-md border border-[var(--gold)]/40 bg-[var(--gold)]/10 px-2 py-0.5 text-xs text-[var(--gold-soft)]">
+              {pickHits} pick{pickHits === 1 ? '' : 's'} da select
+            </span>
+          ) : null}
           {liveOnTheme > 0 ? (
             <span className="text-xs text-[var(--teal-soft)]">
               {liveOnTheme} na select neste tema
@@ -881,14 +950,19 @@ function MatchCard({
         </div>
       </header>
 
-      <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {players.map((player) => (
+      <div className="grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3">
+        {orderedPlayers.map((player) => (
           <PlayerThemeColumn
             key={player.player_id}
             player={player}
             showRoles={showRoles}
             openRoles={openRoles}
             suggestedChampionId={assignment?.[player.player_id] ?? null}
+            isAnchor={
+              (Boolean(anchorPlayerId) &&
+                player.player_id === anchorPlayerId) ||
+              Boolean(lockedPicks?.[player.player_id])
+            }
             canPick={canPick}
             meId={meId}
             pick={picks[player.player_id] ?? null}
@@ -972,6 +1046,7 @@ function rankSkins(
     selectedChampionId: string | null
     takenChampions: Map<string, string>
     playerId: string
+    prioritizeRole: boolean
   },
 ): FlatSkin[] {
   const {
@@ -980,6 +1055,7 @@ function rankSkins(
     selectedChampionId,
     takenChampions,
     playerId,
+    prioritizeRole,
   } = opts
   return [...skins].sort((a, b) => {
     const aSelected =
@@ -990,11 +1066,14 @@ function rankSkins(
       (!selectedSkinId && b.champion_id === selectedChampionId)
     if (aSelected !== bSelected) return aSelected ? -1 : 1
 
+    // SR: rota escolhida antes da sugestão de tema / maestria
+    if (prioritizeRole && b.fit !== a.fit) return b.fit - a.fit
+
     const aSuggested = suggestedChampionId === a.champion_id
     const bSuggested = suggestedChampionId === b.champion_id
     if (aSuggested !== bSuggested) return aSuggested ? -1 : 1
 
-    if (b.fit !== a.fit) return b.fit - a.fit
+    if (!prioritizeRole && b.fit !== a.fit) return b.fit - a.fit
     if (b.mastery_points !== a.mastery_points) {
       return b.mastery_points - a.mastery_points
     }
@@ -1019,6 +1098,7 @@ function PlayerThemeColumn({
   showRoles,
   openRoles,
   suggestedChampionId,
+  isAnchor,
   canPick,
   meId,
   pick,
@@ -1031,6 +1111,7 @@ function PlayerThemeColumn({
   showRoles: boolean
   openRoles: Set<LaneRole>
   suggestedChampionId: string | null
+  isAnchor: boolean
   canPick: boolean
   meId: string | null
   pick: LivePick | null
@@ -1050,25 +1131,25 @@ function PlayerThemeColumn({
   const selectedChampionId =
     isMine && localPick?.champion_id ? localPick.champion_id : null
 
-  const skins = useMemo(
-    () =>
-      rankSkins(flattenPlayerSkins(player, showRoles, openRoles), {
-        suggestedChampionId,
-        selectedSkinId,
-        selectedChampionId,
-        takenChampions,
-        playerId: player.player_id,
-      }),
-    [
-      player,
-      showRoles,
-      openRoles,
+  const skins = useMemo(() => {
+    const flat = flattenPlayerSkins(player, showRoles, openRoles)
+    return rankSkins(flat, {
       suggestedChampionId,
       selectedSkinId,
       selectedChampionId,
       takenChampions,
-    ],
-  )
+      playerId: player.player_id,
+      prioritizeRole: showRoles,
+    })
+  }, [
+    player,
+    showRoles,
+    openRoles,
+    suggestedChampionId,
+    selectedSkinId,
+    selectedChampionId,
+    takenChampions,
+  ])
 
   const visible = skins.slice(0, VISIBLE_SKINS)
   const hidden = skins.slice(VISIBLE_SKINS)
@@ -1077,29 +1158,44 @@ function PlayerThemeColumn({
     pick && player.champions?.some((c) => c.champion_id === pick.champion_id)
       ? pick
       : null
+  const effectiveSuggested =
+    suggestedChampionId &&
+    skins.some((s) => s.champion_id === suggestedChampionId)
+      ? suggestedChampionId
+      : (skins[0]?.champion_id ?? null)
 
   return (
     <section
       className={[
         'rounded-md border bg-[var(--ink-soft)]/80',
-        isMine && canPick
-          ? 'border-[var(--teal)]/35'
-          : 'border-[var(--line)]',
+        isAnchor
+          ? 'border-[var(--gold)]/45 ring-1 ring-[var(--gold)]/20'
+          : isMine && canPick
+            ? 'border-[var(--teal)]/35'
+            : 'border-[var(--line)]',
       ].join(' ')}
     >
       <header className="flex items-center gap-1.5 px-2 pt-1.5 pb-1">
         <p className="min-w-0 truncate text-sm font-medium text-[var(--text-strong)]">
           {player.display_name}
         </p>
+        {isAnchor ? (
+          <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-[var(--gold-soft)]">
+            base
+          </span>
+        ) : null}
         {isMine && canPick ? (
           <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-[var(--teal-soft)]">
             você
           </span>
         ) : null}
-        {showRoles && (primary || secondary) ? (
+        {showRoles && (primary || secondary || flexible) ? (
           <span className="shrink-0 text-[10px] text-[var(--text-muted)]">
-            {primary ?? '—'}
-            {secondary && secondary !== primary ? `/${secondary}` : ''}
+            {flexible
+              ? 'Fill'
+              : `${primary ?? '—'}${
+                  secondary && secondary !== primary ? `/${secondary}` : ''
+                }`}
           </span>
         ) : null}
         {liveOnColumn ? (
@@ -1114,26 +1210,32 @@ function PlayerThemeColumn({
         )}
       </header>
 
-      <ul className="grid grid-cols-3 gap-1 px-1.5 pb-1.5">
-        {shown.map((skin) => (
-          <SkinTile
-            key={skin.skin_id}
-            skin={skin}
-            player={player}
-            showRoles={showRoles}
-            openRoles={openRoles}
-            flexible={flexible}
-            primary={primary}
-            suggestedChampionId={suggestedChampionId}
-            canPick={canPick}
-            isMine={isMine}
-            localPick={localPick}
-            takenChampions={takenChampions}
-            picking={picking}
-            onPick={onPick}
-          />
-        ))}
-      </ul>
+      {skins.length === 0 ? (
+        <p className="px-2 pb-2 text-[10px] leading-snug text-[var(--text-muted)]">
+          Sem skins neste tema
+        </p>
+      ) : (
+        <ul className="grid grid-cols-3 gap-1.5 px-2 pb-2">
+          {shown.map((skin) => (
+            <SkinTile
+              key={skin.skin_id}
+              skin={skin}
+              player={player}
+              showRoles={showRoles}
+              openRoles={openRoles}
+              flexible={flexible}
+              primary={primary}
+              suggestedChampionId={effectiveSuggested}
+              canPick={canPick}
+              isMine={isMine}
+              localPick={localPick}
+              takenChampions={takenChampions}
+              picking={picking}
+              onPick={onPick}
+            />
+          ))}
+        </ul>
+      )}
 
       {hidden.length > 0 ? (
         <button
@@ -1147,6 +1249,91 @@ function PlayerThemeColumn({
         </button>
       ) : null}
     </section>
+  )
+}
+
+function formatMasteryPoints(points: number): string {
+  if (points >= 1_000_000) return `${(points / 1_000_000).toFixed(1)}M`
+  if (points >= 10_000) return `${Math.round(points / 1000)}k`
+  if (points >= 1000) return `${(points / 1000).toFixed(1)}k`
+  return String(points)
+}
+
+/** Escudo com M + nível legível ao lado. */
+function MasteryBadge({
+  level,
+  points,
+}: {
+  level: number
+  points: number
+}) {
+  const lvl = Math.max(0, Math.min(level || 0, 99))
+  if (lvl <= 0 && points <= 0) return null
+  const display = lvl > 0 ? lvl : 1
+
+  const fill =
+    display >= 7
+      ? { outer: '#c9a227', mid: '#f0d878', inner: '#8a6a12' }
+      : display >= 5
+        ? { outer: '#c9a227', mid: '#e6c76a', inner: '#6e5610' }
+        : display >= 3
+          ? { outer: '#3db8a0', mid: '#7ed9c7', inner: '#1a6b5c' }
+          : { outer: '#8b97ab', mid: '#c5cedd', inner: '#3a4454' }
+
+  const chipTone =
+    display >= 7
+      ? 'border-[var(--gold)] text-[var(--gold-soft)]'
+      : display >= 5
+        ? 'border-[var(--gold)]/70 text-[var(--gold-soft)]'
+        : display >= 3
+          ? 'border-[var(--teal)]/70 text-[var(--teal-soft)]'
+          : 'border-white/25 text-[var(--text)]'
+
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1"
+      title={`Maestria ${display}${points > 0 ? ` · ${formatMasteryPoints(points)} pts` : ''}`}
+      aria-label={`Maestria ${display}`}
+    >
+      <span className="relative inline-flex h-6 w-5 items-center justify-center">
+        <svg
+          viewBox="0 0 40 48"
+          className="absolute inset-0 h-full w-full drop-shadow"
+          aria-hidden
+        >
+          <path
+            d="M20 2 L36 8 L36 26 C36 36 28 43 20 46 C12 43 4 36 4 26 L4 8 Z"
+            fill={fill.outer}
+          />
+          <path
+            d="M20 5.5 L33 10.5 L33 25.5 C33 34 26.5 40 20 42.5 C13.5 40 7 34 7 25.5 L7 10.5 Z"
+            fill={fill.mid}
+          />
+          <path
+            d="M20 9 L29.5 13 L29.5 24.5 C29.5 31.5 24.5 36.5 20 38.5 C15.5 36.5 10.5 31.5 10.5 24.5 L10.5 13 Z"
+            fill={fill.inner}
+            opacity={0.92}
+          />
+        </svg>
+        <span
+          className={[
+            'relative z-[1] font-display text-[10px] font-bold leading-none',
+            display >= 3 ? 'text-[var(--ink)]' : 'text-[var(--text-strong)]',
+            'drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)]',
+          ].join(' ')}
+        >
+          M
+        </span>
+      </span>
+      <span
+        className={[
+          'rounded border bg-black/80 px-1.5 py-0.5 font-display text-[11px] font-bold leading-none tabular-nums',
+          chipTone,
+        ].join(' ')}
+      >
+        {display}
+      </span>
+    </span>
   )
 }
 
@@ -1233,8 +1420,18 @@ function SkinTile({
     isMine && !canPick ? 'cursor-default' : '',
   ].join(' ')
 
+  const masteryLvl = skin.mastery_level ?? 0
+  const masteryPts = skin.mastery_points ?? 0
+  const hasMastery = masteryLvl > 0 || masteryPts > 0
+
   const title = `${skin.skin_name} · ${skin.champion_name}${
     roleTag ? ` · ${roleTag}` : ''
+  }${
+    hasMastery
+      ? ` · maestria ${masteryLvl || 1}${
+          masteryPts > 0 ? ` (${formatMasteryPoints(masteryPts)} pts)` : ''
+        }`
+      : ''
   }${selected ? ' · no client' : ''}${takenByOther ? ' · já pegaram' : ''}${
     showSuggestion && !selected ? ' · recomendado' : ''
   }${isMine && canClick ? ' · clique para pickar no LoL' : ''}${
@@ -1243,7 +1440,7 @@ function SkinTile({
 
   const inner = (
     <>
-      <div className="aspect-[4/5] bg-[var(--ink)]">
+      <div className="aspect-square bg-[var(--ink)]">
         {skin.tile_url || skin.splash_url ? (
           <img
             src={skin.tile_url || skin.splash_url || ''}
@@ -1254,39 +1451,46 @@ function SkinTile({
         ) : null}
       </div>
       {skin.champion_image_url ? (
-        <img
-          src={skin.champion_image_url}
-          alt=""
-          className="absolute left-0.5 top-0.5 h-4 w-4 rounded-sm border border-black/40 object-cover shadow"
-          loading="lazy"
-        />
+        <div className="absolute left-1 top-1 rounded-md bg-black/50 p-0.5 shadow-md backdrop-blur-[2px]">
+          <img
+            src={skin.champion_image_url}
+            alt=""
+            className="h-7 w-7 rounded-sm border border-white/20 object-cover"
+            loading="lazy"
+          />
+        </div>
       ) : null}
-      {roleTag ? (
-        <span
-          className={[
-            'absolute right-0.5 top-0.5 rounded bg-black/70 px-0.5 py-px text-[8px] font-semibold',
-            selected || showSuggestion || highlighted
-              ? 'text-[var(--teal-soft)]'
-              : 'text-[var(--text)]',
-          ].join(' ')}
-        >
-          {roleTag}
-        </span>
-      ) : null}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-1 pb-0.5 pt-4">
-        <p className="truncate text-[9px] font-medium leading-tight text-[var(--text-strong)]">
+      <div className="absolute right-1 top-1 z-[1] flex flex-col items-end gap-0.5">
+        {hasMastery ? (
+          <MasteryBadge level={masteryLvl} points={masteryPts} />
+        ) : null}
+        {roleTag ? (
+          <span
+            className={[
+              'rounded bg-black/70 px-1 py-0.5 text-[9px] font-semibold',
+              selected || showSuggestion || highlighted
+                ? 'text-[var(--teal-soft)]'
+                : 'text-[var(--text)]',
+            ].join(' ')}
+          >
+            {roleTag}
+          </span>
+        ) : null}
+      </div>
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/55 to-transparent px-1.5 pb-1 pt-5">
+        <p className="truncate text-[10px] font-medium leading-tight text-[var(--text-strong)]">
           {skin.champion_name}
         </p>
         {selected ? (
-          <p className="truncate text-[7px] font-bold uppercase tracking-wide text-[var(--gold-soft)]">
+          <p className="truncate text-[8px] font-bold uppercase tracking-wide text-[var(--gold-soft)]">
             no client
           </p>
         ) : takenByOther && canPick ? (
-          <p className="truncate text-[7px] font-bold uppercase tracking-wide text-[var(--danger)]">
+          <p className="truncate text-[8px] font-bold uppercase tracking-wide text-[var(--danger)]">
             ocupado
           </p>
         ) : showSuggestion ? (
-          <p className="truncate text-[7px] font-bold uppercase tracking-wide text-[var(--gold-soft)]">
+          <p className="truncate text-[8px] font-bold uppercase tracking-wide text-[var(--gold-soft)]">
             recomendado
           </p>
         ) : null}
