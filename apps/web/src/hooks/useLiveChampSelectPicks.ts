@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChampSelectMember } from '../lib/desktop'
 import { formatError } from '../lib/format'
 import { supabase } from '../lib/supabase'
@@ -166,7 +166,7 @@ export function useLiveChampSelectPicks(input: {
     }
   }, [liveSkinIdsKey])
 
-  const livePicksByPlayer = useMemo(() => {
+  const livePicksRaw = useMemo(() => {
     const out: Record<string, LivePick> = {}
     const team = champSelect?.myTeam ?? []
     if (team.length === 0) return out
@@ -258,12 +258,32 @@ export function useLiveChampSelectPicks(input: {
     skinMetaByLcuId,
   ])
 
+  const livePicksContentKey = useMemo(
+    () =>
+      Object.entries(livePicksRaw)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(
+          ([pid, p]) =>
+            `${pid}:${p.champion_id}:${p.lcu_skin_id}:${p.is_intent ? 1 : 0}:${p.skin_id ?? ''}`,
+        )
+        .join('|'),
+    [livePicksRaw],
+  )
+
+  const livePicksStableRef = useRef(livePicksRaw)
+  const livePicksKeyRef = useRef(livePicksContentKey)
+  if (livePicksKeyRef.current !== livePicksContentKey) {
+    livePicksKeyRef.current = livePicksContentKey
+    livePicksStableRef.current = livePicksRaw
+  }
+  const livePicksByPlayer = livePicksStableRef.current
+
   const activePicks = useMemo(
     () => Object.values(livePicksByPlayer),
     [livePicksByPlayer],
   )
 
-  const takenChampions = useMemo(() => {
+  const takenChampionsRaw = useMemo(() => {
     const map = new Map<string, string>()
     for (const pick of activePicks) {
       if (pick.champion_id) map.set(pick.champion_id, pick.player_id)
@@ -271,7 +291,24 @@ export function useLiveChampSelectPicks(input: {
     return map
   }, [activePicks])
 
-  const lockedAramPicks = useMemo(() => {
+  const takenChampionsKey = useMemo(
+    () =>
+      [...takenChampionsRaw.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([cid, pid]) => `${cid}:${pid}`)
+        .join('|'),
+    [takenChampionsRaw],
+  )
+
+  const takenChampionsStableRef = useRef(takenChampionsRaw)
+  const takenChampionsKeyRef = useRef(takenChampionsKey)
+  if (takenChampionsKeyRef.current !== takenChampionsKey) {
+    takenChampionsKeyRef.current = takenChampionsKey
+    takenChampionsStableRef.current = takenChampionsRaw
+  }
+  const takenChampions = takenChampionsStableRef.current
+
+  const lockedAramPicksRaw = useMemo(() => {
     const out: Record<string, string> = {}
     const confirmed = activePicks.filter((p) => !p.is_intent)
     const intents = activePicks.filter((p) => p.is_intent)
@@ -286,12 +323,20 @@ export function useLiveChampSelectPicks(input: {
 
   const lockedAramPicksKey = useMemo(
     () =>
-      Object.entries(lockedAramPicks)
+      Object.entries(lockedAramPicksRaw)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([pid, cid]) => `${pid}:${cid}`)
         .join('|'),
-    [lockedAramPicks],
+    [lockedAramPicksRaw],
   )
+
+  const lockedAramStableRef = useRef(lockedAramPicksRaw)
+  const lockedAramKeyRef = useRef(lockedAramPicksKey)
+  if (lockedAramKeyRef.current !== lockedAramPicksKey) {
+    lockedAramKeyRef.current = lockedAramPicksKey
+    lockedAramStableRef.current = lockedAramPicksRaw
+  }
+  const lockedAramPicks = lockedAramStableRef.current
 
   return {
     championsByKey,

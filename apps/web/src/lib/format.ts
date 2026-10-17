@@ -1,11 +1,11 @@
 export function formatError(error: unknown): string {
-  if (!error) return 'Algo deu errado'
+  if (!error) return 'Algo não saiu como esperado. Tente novamente.'
   if (typeof error === 'string') return error
   if (error instanceof Error) return error.message
   if (typeof error === 'object' && error !== null && 'message' in error) {
     return String((error as { message: unknown }).message)
   }
-  return 'Algo deu errado'
+  return 'Algo não saiu como esperado. Tente novamente.'
 }
 
 export function modeLabel(mode: string): string {
@@ -51,7 +51,9 @@ export function collectionSyncLabel(
   skinCount: number | undefined,
 ): string {
   if (!iso) {
-    return skinCount && skinCount > 0 ? `${skinCount} skins` : 'Ainda não sincronizou'
+    return skinCount && skinCount > 0
+      ? `${skinCount} skins`
+      : 'Coleção ainda não sincronizada'
   }
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
   const when =

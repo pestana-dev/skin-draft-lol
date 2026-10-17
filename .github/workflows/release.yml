@@ -10,6 +10,32 @@ permissions:
   contents: write
 
 jobs:
+  import-catalog:
+    name: Import skin catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import Data Dragon + CommunityDragon themes
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "Missing VITE_SUPABASE_URL or SUPABASE_SECRET_KEY secrets"
+            exit 1
+          fi
+          npm run import:catalog
+
   publish-tauri:
     permissions:
       contents: write

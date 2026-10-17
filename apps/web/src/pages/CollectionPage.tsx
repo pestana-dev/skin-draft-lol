@@ -204,7 +204,9 @@ export function CollectionPage() {
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl sm:text-4xl">Minha coleção</h1>
-          <p className="mt-1 text-[var(--text-muted)]">Sua coleção do LoL.</p>
+          <p className="mt-1 text-[var(--text-muted)]">
+            As skins que você tem no League Client.
+          </p>
         </div>
         {isDesktop ? (
           <button
@@ -216,9 +218,9 @@ export function CollectionPage() {
                 .then(() => loadCatalog())
                 .catch((err) => setError(formatError(err)))
             }
-            className="rounded-md bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-50"
+            className="btn-primary disabled:opacity-50"
           >
-            {syncing ? 'Sincronizando…' : 'Sincronizar do LoL'}
+            {syncing ? 'Sincronizando…' : 'Sincronizar coleção'}
           </button>
         ) : (
           <Link to="/" className="text-sm text-[var(--teal-soft)]">
@@ -296,7 +298,7 @@ export function CollectionPage() {
 
       {!me?.id && isDesktop ? (
         <p className="mb-4 text-sm text-[var(--text-muted)]">
-          Abra o LoL para sincronizar.
+          Abra o League Client para sincronizar a coleção.
         </p>
       ) : null}
 

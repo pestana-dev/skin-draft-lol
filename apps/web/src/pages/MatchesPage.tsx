@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AramPool } from '../components/AramPool'
 import { usePlayer } from '../contexts/PlayerContext'
@@ -132,41 +139,43 @@ export function MatchesPage() {
     }
   }
 
-  async function pickSkin(skinId: string) {
-    if (!canPick || picking) return
-    setPicking(true)
-    setError(null)
-    try {
-      // Cache: skin já mapeada via select (LCU id)
-      for (const [lcuId, meta] of skinMetaByLcuId) {
-        if (meta.id !== skinId) continue
-        const championKey = Math.floor(lcuId / 1000)
-        if (championKey > 0) {
-          await pickInClient(championKey, lcuId)
-          return
+  const pickSkin = useCallback(
+    async (skinId: string) => {
+      if (!canPick || picking) return
+      setPicking(true)
+      setError(null)
+      try {
+        for (const [lcuId, meta] of skinMetaByLcuId) {
+          if (meta.id !== skinId) continue
+          const championKey = Math.floor(lcuId / 1000)
+          if (championKey > 0) {
+            await pickInClient(championKey, lcuId)
+            return
+          }
         }
+        const { data: skin, error: skinError } = await supabase
+          .from('skins')
+          .select('id, num, champions(key)')
+          .eq('id', skinId)
+          .single()
+        if (skinError) throw skinError
+        const champ = skin.champions as { key?: string | null } | null
+        const championKey = Number(champ?.key)
+        const skinNum = Number(skin.num ?? 0)
+        if (!Number.isFinite(championKey) || championKey <= 0) {
+          throw new Error('Campeão sem key Riot — sincronize o catálogo')
+        }
+        const lcuSkinId =
+          championKey * 1000 + (Number.isFinite(skinNum) ? skinNum : 0)
+        await pickInClient(championKey, lcuSkinId)
+      } catch (err) {
+        setError(formatError(err))
+      } finally {
+        setPicking(false)
       }
-      const { data: skin, error: skinError } = await supabase
-        .from('skins')
-        .select('id, num, champions(key)')
-        .eq('id', skinId)
-        .single()
-      if (skinError) throw skinError
-      const champ = skin.champions as { key?: string | null } | null
-      const championKey = Number(champ?.key)
-      const skinNum = Number(skin.num ?? 0)
-      if (!Number.isFinite(championKey) || championKey <= 0) {
-        throw new Error('Campeão sem key Riot — sincronize o catálogo')
-      }
-      const lcuSkinId =
-        championKey * 1000 + (Number.isFinite(skinNum) ? skinNum : 0)
-      await pickInClient(championKey, lcuSkinId)
-    } catch (err) {
-      setError(formatError(err))
-    } finally {
-      setPicking(false)
-    }
-  }
+    },
+    [canPick, picking, skinMetaByLcuId, pickInClient, setError],
+  )
 
   const localLivePick = me?.id ? livePicksByPlayer[me.id] ?? null : null
   const teamReady =
@@ -291,7 +300,7 @@ export function MatchesPage() {
   ])
 
   if (loading && !room) {
-    return <p className="text-[var(--text-muted)]">Montando o party…</p>
+    return <p className="text-[var(--text-muted)]">Montando o lobby…</p>
   }
 
   if (error && !room) {
@@ -316,20 +325,20 @@ export function MatchesPage() {
   }
 
   return (
-    <div className="animate-fade-up">
+    <div>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--teal-soft)]">
             {queueLabel(queueKind)}
             {filterAram ? ' · filtrado pelo pool' : ''}
           </p>
-          <h1 className="font-display text-3xl sm:text-4xl">Combinações</h1>
+          <h1 className="font-display text-3xl sm:text-4xl">Combinar skins</h1>
           <p className="mt-1 max-w-2xl text-[var(--text-muted)]">
             {canPick
-              ? 'Clique na skin — o pick vai para o League Client. Aqui só espelhamos a select ao vivo.'
+              ? 'Escolha o pick — a skin vai para o League Client. Aqui espelhamos a select ao vivo.'
               : inChampSelect
-                ? 'Select aberta no client — espelhando escolhas do time.'
-                : 'Só combinações possíveis. Entre na select do LoL para pickar pelo Skin Draft.'}
+                ? 'Select aberta no client — espelhando as escolhas do seu time.'
+                : 'Confira os combos possíveis. Entre na select do LoL para pickar pelo Skin Draft.'}
           </p>
         </div>
         <button
@@ -355,7 +364,7 @@ export function MatchesPage() {
       ) : null}
 
       {teamReady ? (
-        <div className="animate-fade-up-delay mt-4 rounded-[var(--radius)] border border-[var(--gold)]/40 bg-[var(--gold)]/10 px-4 py-3">
+        <div className="mt-4 rounded-[var(--radius)] border border-[var(--gold)]/40 bg-[var(--gold)]/10 px-4 py-3">
           <p className="font-display text-lg text-[var(--gold-soft)]">
             Time com campeões na select
           </p>
@@ -409,7 +418,7 @@ export function MatchesPage() {
         ) : participants.length < 2 ? (
           <div className="rounded-[var(--radius)] border border-dashed border-[var(--line)] bg-[var(--panel)]/50 px-6 py-10 text-center">
             <p className="text-[var(--text-muted)]">
-              Aguarde o party — precisa de pelo menos 2 pessoas.
+              Seu time precisa de pelo menos 2 pessoas para combinar skins.
             </p>
           </div>
         ) : matches.length === 0 ? (
@@ -417,8 +426,8 @@ export function MatchesPage() {
             <p className="text-[var(--text-muted)]">
               Nenhuma combinação possível sem conflito de campeão.
               {filterAram
-                ? ' Ajuste o party ou sincronize as coleções.'
-                : ' Sincronize as coleções do party.'}
+                ? ' Ajuste o lobby ou sincronize as coleções.'
+                : ' Sincronize as coleções do seu time.'}
             </p>
             <Link
               to="/collection"
@@ -493,7 +502,7 @@ export function MatchesPage() {
                         localPick={localLivePick}
                         takenChampions={takenChampions}
                         picking={picking}
-                        onPick={(skinId) => void pickSkin(skinId)}
+                        onPick={pickSkin}
                       />
                     ))}
                   </div>
@@ -530,7 +539,7 @@ function PartyStrip({
     <div>
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
-          {inChampSelect ? 'Select ao vivo' : 'No party'}
+          {inChampSelect ? 'Select ao vivo' : 'Seu time'}
         </p>
         <p className="text-xs text-[var(--text-muted)]">
           {participants.length}{' '}
@@ -546,8 +555,7 @@ function PartyStrip({
           return (
             <li
               key={pid}
-              className="animate-fade-up flex min-w-[9.5rem] max-w-[12rem] shrink-0 items-center gap-2.5 rounded-md border border-[var(--line)] bg-[var(--ink-soft)]/90 px-2.5 py-2"
-              style={{ animationDelay: `${index * 0.05}s` }}
+              className="flex min-w-[9.5rem] max-w-[12rem] shrink-0 items-center gap-2.5 rounded-md border border-[var(--line)] bg-[var(--ink-soft)]/90 px-2.5 py-2"
             >
               <span
                 className={[
@@ -833,7 +841,7 @@ function ChampionAnchorBar({
   )
 }
 
-function MatchCard({
+const MatchCard = memo(function MatchCard({
   match,
   total,
   rank,
@@ -897,7 +905,10 @@ function MatchCard({
     lockedPicks,
   ])
 
-  const openRoles = showRoles ? openLaneRoles(players) : new Set<LaneRole>()
+  const openRoles = useMemo(
+    () => (showRoles ? openLaneRoles(players) : new Set<LaneRole>()),
+    [showRoles, players],
+  )
   const optionCount =
     match.option_count ??
     players.reduce((n, p) => n + (p.skin_count ?? 0), 0)
@@ -917,7 +928,7 @@ function MatchCard({
   }, [players, anchorPlayerId])
 
   return (
-    <article className="overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)]/90">
+    <article className="overflow-hidden rounded-[var(--radius)] border border-[var(--line)] bg-[var(--panel)]/90 [content-visibility:auto] [contain-intrinsic-size:auto_320px]">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-3">
         <div className="flex flex-wrap items-baseline gap-3">
           <span className="font-mono text-sm text-[var(--text-muted)]">#{rank}</span>
@@ -975,7 +986,7 @@ function MatchCard({
       </div>
     </article>
   )
-}
+})
 
 const VISIBLE_SKINS = 3
 
@@ -1093,7 +1104,7 @@ function rankSkins(
   })
 }
 
-function PlayerThemeColumn({
+const PlayerThemeColumn = memo(function PlayerThemeColumn({
   player,
   showRoles,
   openRoles,
@@ -1250,7 +1261,7 @@ function PlayerThemeColumn({
       ) : null}
     </section>
   )
-}
+})
 
 function formatMasteryPoints(points: number): string {
   if (points >= 1_000_000) return `${(points / 1_000_000).toFixed(1)}M`
@@ -1337,7 +1348,7 @@ function MasteryBadge({
   )
 }
 
-function SkinTile({
+const SkinTile = memo(function SkinTile({
   skin,
   player,
   showRoles,
@@ -1447,16 +1458,18 @@ function SkinTile({
             alt={skin.skin_name}
             className="h-full w-full object-cover object-top"
             loading="lazy"
+            decoding="async"
           />
         ) : null}
       </div>
       {skin.champion_image_url ? (
-        <div className="absolute left-1 top-1 rounded-md bg-black/50 p-0.5 shadow-md backdrop-blur-[2px]">
+        <div className="absolute left-1 top-1 rounded-md bg-black/55 p-0.5 shadow-md">
           <img
             src={skin.champion_image_url}
             alt=""
             className="h-7 w-7 rounded-sm border border-white/20 object-cover"
             loading="lazy"
+            decoding="async"
           />
         </div>
       ) : null}
@@ -1517,4 +1530,4 @@ function SkinTile({
       )}
     </li>
   )
-}
+})

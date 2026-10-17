@@ -366,8 +366,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           return selectActive
         }
 
-        setPartyId(status.party!.partyId)
-        setQueueKind(status.party!.queueKind ?? null)
+        const nextPartyId = status.party!.partyId
+        const nextQueueKind = status.party!.queueKind ?? null
+        setPartyId((prev) => (prev === nextPartyId ? prev : nextPartyId))
+        setQueueKind((prev) => (prev === nextQueueKind ? prev : nextQueueKind))
 
         if (fp !== lastPartyFpRef.current && !syncBusyRef.current) {
           syncBusyRef.current = true
@@ -383,7 +385,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        if (!cancelled) setError(hardError ?? softWarning)
+        const nextError = hardError ?? softWarning
+        if (!cancelled) {
+          setError((prev) => (prev === nextError ? prev : nextError))
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err))

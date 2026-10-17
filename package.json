@@ -1,7 +1,7 @@
 {
   "name": "skin-draft-lol",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "workspaces": [
     "apps/*"
@@ -19,5 +19,8 @@
     "import:roles": "node scripts/sync-champion-roles.mjs",
     "sync:aram": "node scripts/sync-aram.mjs",
     "build:aram-exe": "python scripts/build_aram_exe.py"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2"
   }
 }

@@ -3,7 +3,6 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { Layout } from './components/Layout'
 import { PlayerProvider } from './contexts/PlayerContext'
 import { CollectionPage } from './pages/CollectionPage'
-import { HistoryPage } from './pages/HistoryPage'
 import { HomePage } from './pages/HomePage'
 import { MatchesPage } from './pages/MatchesPage'
 import { ResultPage } from './pages/ResultPage'
@@ -17,7 +16,6 @@ export default function App() {
             <Route index element={<HomePage />} />
             <Route path="auth" element={<Navigate to="/" replace />} />
             <Route path="collection" element={<CollectionPage />} />
-            <Route path="history" element={<HistoryPage />} />
             <Route path="party/:partyId" element={<Navigate to="/" replace />} />
             <Route
               path="room/:roomId"

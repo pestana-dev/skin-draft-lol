@@ -1,5 +1,5 @@
 /**
- * Importa campeões e skins do Data Dragon + temas heurísticos.
+ * Importa campeões/skins do Data Dragon + temas oficiais (skinlines) do CommunityDragon.
  *
  * Modo A (recomendado se tiver secret key):
  *   Preencha SUPABASE_SECRET_KEY ou SUPABASE_SERVICE_ROLE_KEY no .env
@@ -7,7 +7,7 @@
  *
  * Modo B (sem secret key):
  *   npm run import:catalog
- *   → gera supabase/seed-catalog.sql
+ *   → gera supabase/seed-parts/*.sql
  *   → cole/rode no SQL Editor do Supabase
  */
 
@@ -49,6 +49,8 @@ const SERVICE_KEY =
 const DDRAGON = 'https://ddragon.leagueoflegends.com'
 const MERAKI =
   'https://cdn.merakianalytics.com/riot/lol/resources/latest/en-US/champions.json'
+const CDRAGON =
+  'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global'
 const BATCH = 200
 
 const POSITION_MAP = {
@@ -68,46 +70,74 @@ function mapPositions(positions) {
   return out
 }
 
-const THEME_RULES = [
-  { slug: 'project', name: 'PROJECT', match: /^PROJECT:/i },
-  { slug: 'star-guardian', name: 'Guardiãs Estelares', match: /star guardian/i },
-  { slug: 'battle-academia', name: 'Academia de Batalha', match: /battle academia|academy/i },
-  { slug: 'spirit-blossom', name: 'Florescer Espiritual', match: /spirit blossom/i },
-  { slug: 'true-damage', name: 'True Damage', match: /true damage/i },
-  { slug: 'kda', name: 'K/DA', match: /^k\/da|kda /i },
-  { slug: 'pentakill', name: 'Pentakill', match: /pentakill/i },
-  { slug: 'arcade', name: 'Arcade', match: /^arcade /i },
-  { slug: 'blood-moon', name: 'Lua Sangrenta', match: /blood moon/i },
-  { slug: 'dark-star', name: 'Estrela Negra', match: /dark star/i },
-  { slug: 'cosmic', name: 'Cósmico', match: /^cosmic |cosmic$/i },
-  { slug: 'eclipse', name: 'Eclipse', match: /eclipse/i },
-  { slug: 'high-noon', name: 'Meio-Dia', match: /high noon/i },
-  { slug: 'odyssey', name: 'Odisseia', match: /^odyssey /i },
-  { slug: 'pool-party', name: 'Festa na Piscina', match: /pool party/i },
-  { slug: 'snow-day', name: 'Dia de Neve', match: /snow day|winter Wonder|winterwonder/i },
-  { slug: 'halloween', name: 'Halloween', match: /bewitching|pumpkinhead|haunted|zombie/i },
-  { slug: 'worlds', name: 'Worlds', match: /championship|worlds /i },
-  { slug: 'victorious', name: 'Vitoriosa', match: /^victorious /i },
-  { slug: 'prestige', name: 'Prestígio', match: /prestige/i },
-  { slug: 'coven', name: 'Coven', match: /^coven /i },
-  { slug: 'elderwood', name: 'Bosque Ancião', match: /elderwood/i },
-  { slug: 'inkshadow', name: 'Inkshadow', match: /inkshadow/i },
-  { slug: 'faerie-court', name: 'Corte das Fadas', match: /faerie court/i },
-  { slug: 'empiryrean', name: 'Empíreo', match: /emp(?:y|i)rean/i },
-  { slug: 'soul-fighter', name: 'Lutador das Almas', match: /soul fighter/i },
-  { slug: 'anima-squad', name: 'Esquadrão Ânima', match: /anima squad/i },
-  { slug: 'heartsteel', name: 'HEARTSTEEL', match: /heartsteel/i },
-  { slug: 'porcelain', name: 'Porcelana', match: /^porcelain /i },
-  { slug: 'crime-city', name: 'Crime City', match: /crime city/i },
-]
+/** Slug estável por id oficial da skinline (CDragon). */
+function skinlineSlug(id) {
+  return `sl-${id}`
+}
 
 function sqlStr(value) {
   if (value === null || value === undefined) return 'null'
   return `'${String(value).replace(/'/g, "''")}'`
 }
 
-function inferThemes(skinName) {
-  return THEME_RULES.filter((rule) => rule.match.test(skinName))
+/**
+ * Skinlines oficiais + mapa LCU id → slugs de tema.
+ * Nomes preferem pt_BR; ids batem com championKey*1000+num.
+ */
+async function fetchCdragonThemes() {
+  console.log('Buscando skinlines oficiais (CommunityDragon)…')
+  const [linesPt, linesEn, skinsRaw] = await Promise.all([
+    fetch(`${CDRAGON}/pt_br/v1/skinlines.json`).then((r) => {
+      if (!r.ok) throw new Error(`skinlines pt_BR → ${r.status}`)
+      return r.json()
+    }),
+    fetch(`${CDRAGON}/default/v1/skinlines.json`).then((r) => {
+      if (!r.ok) throw new Error(`skinlines en → ${r.status}`)
+      return r.json()
+    }),
+    fetch(`${CDRAGON}/default/v1/skins.json`).then((r) => {
+      if (!r.ok) throw new Error(`skins CDragon → ${r.status}`)
+      return r.json()
+    }),
+  ])
+
+  const nameById = new Map()
+  for (const line of linesEn ?? []) {
+    if (!line?.id || !normalizeName(line.name || '')) continue
+    nameById.set(line.id, normalizeName(line.name))
+  }
+  for (const line of linesPt ?? []) {
+    if (!line?.id || !normalizeName(line.name || '')) continue
+    nameById.set(line.id, normalizeName(line.name))
+  }
+
+  const themes = [...nameById.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([id, name]) => ({ slug: skinlineSlug(id), name, cdragon_id: id }))
+
+  /** @type {Map<number, string[]>} */
+  const themeSlugsByLcuId = new Map()
+  const skinEntries = Array.isArray(skinsRaw)
+    ? skinsRaw
+    : Object.values(skinsRaw ?? {})
+
+  for (const skin of skinEntries) {
+    const lcuId = Number(skin?.id)
+    if (!Number.isFinite(lcuId) || lcuId <= 0) continue
+    const lineIds = (skin.skinLines ?? [])
+      .map((l) => Number(l?.id))
+      .filter((id) => Number.isFinite(id) && nameById.has(id))
+    if (lineIds.length === 0) continue
+    themeSlugsByLcuId.set(
+      lcuId,
+      lineIds.map((id) => skinlineSlug(id)),
+    )
+  }
+
+  console.log(
+    `${themes.length} skinlines · ${themeSlugsByLcuId.size} skins com linha temática`,
+  )
+  return { themes, themeSlugsByLcuId }
 }
 
 function normalizeName(name) {
@@ -137,7 +167,9 @@ async function rest(path, { method = 'GET', body } = {}) {
       Prefer:
         method === 'GET'
           ? 'return=representation'
-          : 'resolution=merge-duplicates,return=minimal',
+          : method === 'DELETE'
+            ? 'return=minimal'
+            : 'resolution=merge-duplicates,return=minimal',
     },
     body: body ? JSON.stringify(body) : undefined,
   })
@@ -204,11 +236,14 @@ async function fetchCatalog() {
     }
   })
 
-  const themes = THEME_RULES.map(({ slug, name }) => ({ slug, name }))
+  const { themes: cdragonThemes, themeSlugsByLcuId } = await fetchCdragonThemes()
+  const themes = cdragonThemes.map(({ slug, name }) => ({ slug, name }))
   const skins = []
   /** @type {Array<{ slug: string, skin_id: string }>} */
   const themeLinks = []
   let chromasSkipped = 0
+  let themeHits = 0
+  let skinsWithoutLine = 0
 
   for (const [index, champ] of championList.entries()) {
     const [detailEn, detailBr] = await Promise.all([
@@ -224,9 +259,7 @@ async function fetchCatalog() {
     const brSkins = detailBr.data[champ.id].skins
     const brNameByNum = new Map(brSkins.map((s) => [s.num, s.name]))
     const championBrName = championsBr.data[champ.id]?.name ?? champ.name
-
-    /** Nomes EN já importados — detecta chroma com mais estabilidade. */
-    const seenEnNames = new Set()
+    const championKey = Number(champ.key)
 
     for (const skin of enSkins) {
       if (skin.num === 0) continue
@@ -240,8 +273,6 @@ async function fetchCatalog() {
         chromasSkipped += 1
         continue
       }
-
-      seenEnNames.add(enName)
 
       const brRaw = brNameByNum.get(skin.num)
       const displayName = normalizeName(
@@ -261,9 +292,15 @@ async function fetchCatalog() {
         num: skin.num,
       })
 
-      // Temas usam o nome EN (regex das linhas temáticas)
-      for (const theme of inferThemes(enName)) {
-        themeLinks.push({ slug: theme.slug, skin_id: skinId })
+      const lcuId = championKey * 1000 + Number(skin.num)
+      const slugs = themeSlugsByLcuId.get(lcuId)
+      if (!slugs?.length) {
+        skinsWithoutLine += 1
+        continue
+      }
+      for (const slug of slugs) {
+        themeLinks.push({ slug, skin_id: skinId })
+        themeHits += 1
       }
     }
 
@@ -273,6 +310,9 @@ async function fetchCatalog() {
   }
 
   console.log(`Chromas ignoradas: ${chromasSkipped}`)
+  console.log(
+    `Vínculos tema↔skin: ${themeHits} · skins sem skinline: ${skinsWithoutLine}`,
+  )
 
   return { champions, themes, skins, themeLinks }
 }
@@ -316,6 +356,8 @@ function writeSqlSeed({ champions, themes, skins, themeLinks }) {
   }
 
   {
+    const reset = `truncate table public.skin_theme_members;
+delete from public.skin_themes;`
     const stmts = chunkValues(
       themes,
       (t) => `(${sqlStr(t.slug)}, ${sqlStr(t.name)})`,
@@ -324,7 +366,7 @@ function writeSqlSeed({ champions, themes, skins, themeLinks }) {
       (chunk) =>
         `insert into public.skin_themes (slug, name) values\n${chunk}\non conflict (slug) do update set name = excluded.name;`,
     )
-    writePart('themes', stmts.join('\n\n'))
+    writePart('themes', [reset, ...stmts].join('\n\n'))
   }
 
   {
@@ -408,27 +450,50 @@ async function deleteStaleSkins(keepIds) {
   return stale.length
 }
 
-async function importViaApi({ champions, themes, skins, themeLinks }) {
-  console.log('Upsert champions')
-  await upsertBatch('champions', champions, 'id')
-  console.log('\nUpsert themes')
+async function replaceThemeMemberships(themes, themeLinks) {
+  console.log('Substituindo temas (skinlines CDragon)…')
+  // Limpa vínculos antigos (regex/heurística) antes de gravar os oficiais
+  await rest('skin_theme_members?theme_id=not.is.null', { method: 'DELETE' })
   await upsertBatch('skin_themes', themes, 'slug')
-  console.log('\n')
+  console.log('')
 
   const themeRows = await rest('skin_themes?select=id,slug')
-  const themeIdBySlug = Object.fromEntries(themeRows.map((t) => [t.slug, t.id]))
+  const keepSlugs = new Set(themes.map((t) => t.slug))
+  const themeIdBySlug = Object.fromEntries(
+    (themeRows ?? []).map((t) => [t.slug, t.id]),
+  )
 
-  console.log(`Upsert ${skins.length} skins (sem chromas)`)
-  await upsertBatch('skins', skins, 'id')
-  console.log('\n')
+  const staleThemes = (themeRows ?? []).filter((t) => !keepSlugs.has(t.slug))
+  for (let i = 0; i < staleThemes.length; i += BATCH) {
+    const chunk = staleThemes.slice(i, i + BATCH)
+    const filter = chunk.map((t) => encodeURIComponent(t.id)).join(',')
+    await rest(`skin_themes?id=in.(${filter})`, { method: 'DELETE' })
+  }
+  if (staleThemes.length) {
+    console.log(`${staleThemes.length} temas antigos removidos`)
+  }
 
   const members = themeLinks
     .map((m) => ({ theme_id: themeIdBySlug[m.slug], skin_id: m.skin_id }))
     .filter((m) => m.theme_id)
 
-  console.log(`Upsert ${members.length} theme memberships`)
+  console.log(`Inserindo ${members.length} vínculos tema↔skin`)
   await upsertBatch('skin_theme_members', members, 'theme_id,skin_id')
-  console.log('\nRemovendo chromas antigas do banco…')
+  console.log('')
+}
+
+async function importViaApi({ champions, themes, skins, themeLinks }) {
+  console.log('Upsert champions')
+  await upsertBatch('champions', champions, 'id')
+  console.log('\n')
+
+  console.log(`Upsert ${skins.length} skins (sem chromas)`)
+  await upsertBatch('skins', skins, 'id')
+  console.log('\n')
+
+  await replaceThemeMemberships(themes, themeLinks)
+
+  console.log('Removendo chromas antigas do banco…')
   const removed = await deleteStaleSkins(skins.map((s) => s.id))
   console.log(`\n${removed} skins removidas. Catálogo importado via API.`)
 }

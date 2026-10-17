@@ -1,5 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <rect width="32" height="32" rx="6" fill="#0B1220"/>
-  <path d="M8 22 L16 6 L24 22 Z" stroke="#C9A227" stroke-width="2" fill="none"/>
-  <circle cx="16" cy="18" r="3" fill="#3DB8A0"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none" role="img" aria-label="Skin Draft">
+  <!-- App icon: original frog on brand ink background -->
+  <rect width="1024" height="1024" rx="224" fill="#0B1220"/>
+  <!-- Soft teal wash -->
+  <circle cx="512" cy="480" r="340" fill="#3DB8A0" opacity="0.12"/>
+  <!-- Body -->
+  <ellipse cx="512" cy="560" rx="288" ry="256" fill="#2EC4A8"/>
+  <!-- Belly -->
+  <ellipse cx="512" cy="620" rx="176" ry="128" fill="#E6C76A"/>
+  <!-- Eyes -->
+  <circle cx="368" cy="400" r="120" fill="#F4F7FB"/>
+  <circle cx="656" cy="400" r="120" fill="#F4F7FB"/>
+  <circle cx="392" cy="416" r="54" fill="#0B1220"/>
+  <circle cx="680" cy="416" r="54" fill="#0B1220"/>
+  <circle cx="410" cy="396" r="18" fill="#FFFFFF"/>
+  <circle cx="698" cy="396" r="18" fill="#FFFFFF"/>
+  <!-- Smile -->
+  <path d="M400 688c52 52 172 52 224 0" stroke="#0D3D36" stroke-width="36" stroke-linecap="round"/>
+  <!-- Cheeks -->
+  <ellipse cx="272" cy="528" rx="48" ry="32" fill="#E35D6A" opacity="0.45"/>
+  <ellipse cx="752" cy="528" rx="48" ry="32" fill="#E35D6A" opacity="0.45"/>
+  <!-- Feet -->
+  <ellipse cx="352" cy="820" rx="80" ry="38" fill="#249E88"/>
+  <ellipse cx="672" cy="820" rx="80" ry="38" fill="#249E88"/>
 </svg>

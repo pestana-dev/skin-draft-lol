@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Skin Draft frog">
+  <!-- Original mascot  not Riot IP. Friendly draft buddy. -->
+  <circle cx="32" cy="34" r="22" fill="#1a3d38"/>
+  <ellipse cx="32" cy="38" rx="18" ry="16" fill="#2ec4a8"/>
+  <ellipse cx="32" cy="42" rx="11" ry="8" fill="#ffd56a"/>
+  <!-- Eyes -->
+  <circle cx="23" cy="28" r="7.5" fill="#f7fafc"/>
+  <circle cx="41" cy="28" r="7.5" fill="#f7fafc"/>
+  <circle cx="24.5" cy="29" r="3.4" fill="#08101c"/>
+  <circle cx="42.5" cy="29" r="3.4" fill="#08101c"/>
+  <circle cx="25.6" cy="27.8" r="1.1" fill="#fff"/>
+  <circle cx="43.6" cy="27.8" r="1.1" fill="#fff"/>
+  <!-- Smile -->
+  <path d="M25 46c3.2 3.2 10.8 3.2 14 0" stroke="#0d3d36" stroke-width="2.2" stroke-linecap="round"/>
+  <!-- Cheeks -->
+  <ellipse cx="17" cy="36" rx="3" ry="2" fill="#ff7a6e" opacity="0.55"/>
+  <ellipse cx="47" cy="36" rx="3" ry="2" fill="#ff7a6e" opacity="0.55"/>
+  <!-- Tiny feet -->
+  <ellipse cx="22" cy="53" rx="5" ry="2.4" fill="#249e88"/>
+  <ellipse cx="42" cy="53" rx="5" ry="2.4" fill="#249e88"/>
+</svg>

@@ -4,7 +4,7 @@ Companion de PC para amigos combinarem skins temáticas no League of Legends —
 
 **Stack:** React + Vite · Tauri 2 · Supabase · identidade via LCU (Riot ID / puuid)
 
-Detalhes em [ARCHITECTURE.md](./ARCHITECTURE.md).
+Detalhes em [ARCHITECTURE.md](./ARCHITECTURE.md). Tom de voz e UX writing: [docs/ux-writing.md](./docs/ux-writing.md).
 
 ## Como funciona
 
@@ -66,6 +66,7 @@ Em **Settings → Secrets and variables → Actions**, crie:
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Senha da chave (vazio se não tiver) |
 | `VITE_SUPABASE_URL` | URL do projeto Supabase |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Chave publishable (embutida no exe para os amigos) |
+| `SUPABASE_SECRET_KEY` | Secret key do Supabase (job `import:catalog` em cada release) |
 
 A chave pública já está em `tauri.conf.json`. A privada fica só em `.tauri-keys/` (gitignored) e no secret.
 
@@ -79,7 +80,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-3. O Action gera o Release com `.exe` (Windows) e `.dmg` (Mac).
+3. O Action gera o Release com `.exe` (Windows) e `.dmg` (Mac), e roda `npm run import:catalog` (skins + skinlines) no Supabase.
 4. Mande o link do Release aos amigos. Nas próximas tags, o banner **Atualizar agora** no app baixa a versão nova.
 
 ### Build local (opcional)
@@ -116,6 +117,6 @@ npm run build:aram-exe
 | --- | --- |
 | `npm run dev:desktop` | App Tauri + LCU |
 | `npm run dev` | Só UI no browser (sem sync LCU) |
-| `npm run import:catalog` | Importa skins (pt_BR) |
+| `npm run import:catalog` | Importa skins (pt_BR) + temas oficiais (skinlines CommunityDragon) |
 | `npm run import:roles` | Roles SR (Meraki) |
 | `npm run build:desktop` | Instalador local |
