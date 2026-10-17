@@ -547,7 +547,7 @@ function PartyStrip({
         </p>
       </div>
       <ul className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
-        {participants.map((p, index) => {
+        {participants.map((p) => {
           const pid = p.player_id
           const name = p.player?.display_name ?? 'Jogador'
           const initial = name.trim().charAt(0).toUpperCase() || '?'
